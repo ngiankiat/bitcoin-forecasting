@@ -33,8 +33,10 @@ library(hablar) #for bollinger band analysis
 
 ```
 
-# **Additional Features added (to consider)**
-## **Import the scrapped Bitcoin News Articles - Sentiments**
+# **Scrape/Download Data**
+
+## **Additional Features added (to consider)**
+### **Import the scrapped Bitcoin News Articles - Sentiments**
 
 * This is included because I feel that on top of technical analysis, sentiment analysis is also equally important. Although there is scraping of google hits, sentiments gathered from news articles can also be a possible feature to consider. This is because it can give us a general idea of people's opinions and sentiments about Bitcoin, which may be an equally good indicator as to how frequent people search bitcoin on the search engine.
 
@@ -74,7 +76,40 @@ fedfundsrate <- fedfundsrate %>% map_df(na.locf)
 fedfundsrate$effr <- as.numeric(fedfundsrate$effr)
 ```
 
-## **Bollinger Bands**
+# **Feature Engineering**
+
+## BITCOIN PRICE DATA
+
+### Cleaning Bitcoin Prices
+```{r}
+bitcoin_price[bitcoin_price == 0] <- NA
+bitcoin_price <- bitcoin_price %>% map_df(na.locf)
+
+```
+
+### Define Target
+
+* The future return was changed to **log returns** instead of arithmetic returns. Arithmetic return has a positive bias. To eliminate this bias a log return is preferred. It removes this bias and puts all the numbers in a log plane, and in the process also normalizing the returns to log normal. 
+
+```{r}
+bitcoin_model <- bitcoin_price %>%
+  tq_mutate(select = close,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'log',                            
+            col_rename = 'future_return') %>%
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)),
+         close = lag(close, 1),
+         date = date - days(1)) %>%
+  select(date, close, future_return, future_return_sign) 
+
+bitcoin_model <- bitcoin_model[-1, ]
+
+```
+
+## **Additional Features added (to consider)**
+
+### **Bollinger Bands**
 
 * The two main goals of this indicator are to convey the market message on the volatility and to define high (resistance) or low (support) on a relative basis. 
 * If the price action hits the upper Bollinger Band, the tool suggests that the asset is overbought and that we may see a rotation from the current levels.
@@ -107,93 +142,25 @@ df_1 <- df_1 %>% mutate(bb_width = (up-dn)/mavg)
 
 ```
 
-### Visualisation
-
 ```{r}
-plot1 <- ggplot(df_1, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) +
-  scale_x_date(limits = as.Date(c('2018-06-01','2020-10-01')),labels=date_format("%b-%Y")) + 
-  scale_colour_manual(values = c("darkred"))
-plot2 <- ggplot(df_1, aes(x = date)) +  geom_line(aes(y = bb_width, colour = "BOLL BW")) +
-  scale_x_date(limits = as.Date(c('2018-06-01','2020-10-01')),labels=date_format("%b-%Y")) + 
-  scale_colour_manual(values = c("steelblue"))
+bb_df <- df_1 %>% select(c(date,bb_width))
+bitcoin_model <- bitcoin_model %>% left_join(bb_df)
 
-grid.newpage()
-grid.draw(rbind(ggplotGrob(plot1), ggplotGrob(plot2), size = "last"))
 ```
 
 
+## **Relative Strength Index (RSI)**
+
+* RSI is a momentum oscillator that measures the speed and change of price movements. 
+* It oscillates between zero and 100. 
+* According to Wilder, RSI is considered overbought when > 70 and oversold when < 30.
+
 ```{r}
-# colors column for increasing and decreasing
-for (i in 1:length(df_1[,1])) {
-  if (df_1$close[i] >= df_1$open[i]) {
-    df_1$direction[i] = 'Increasing'
-  } else {
-    df_1$direction[i] = 'Decreasing'
-  }
-}
-
-i <- list(line = list(color = '#008000'))
-d <- list(line = list(color = '#FF0000'))
-
-# plot candlestick chart
-
-fig2 <- df_1 %>% plot_ly(x = ~date, type="candlestick",
-                      open = ~open, close = ~close,
-                      high = ~high, low = ~low, name = "BTC",
-                      increasing = i, decreasing = d) 
-fig2 <- fig2 %>% add_lines(x = ~date, y = ~up , name = "B Bands",
-                         line = list(color = '#60b6eb', width = 0.5),
-                         legendgroup = "Bollinger Bands",
-                         hoverinfo = "none", inherit = F) 
-fig2 <- fig2 %>% add_lines(x = ~date, y = ~dn, name = "B Bands",
-                         line = list(color = '#60b6eb', width = 0.5),
-                         legendgroup = "Bollinger Bands", inherit = F,
-                         showlegend = FALSE, hoverinfo = "none") 
-fig2 <- fig2 %>% add_lines(x = ~date, y = ~mavg, name = "Mv Avg",
-                         line = list(color = '#f55d6a', width = 0.5),
-                         hoverinfo = "none", inherit = F) 
-fig2 <- fig2 %>% layout(yaxis = list(title = "Price"))
-
-# plot volume bar chart
-fig3 <- df_1 
-fig3 <- fig3 %>% plot_ly(x=~date, y=~volume_currency, type='bar', name = "BTC Volume",
-                         color = ~direction, colors = c('#008000','#FF0000')) 
-fig3 <- fig3 %>% layout(yaxis = list(title = "Volume"))
-
-# create rangeselector buttons
-rs <- list(visible = TRUE, x = 0.5, y = -0.055,
-           xanchor = 'center', yref = 'paper',
-           font = list(size = 9),
-           buttons = list(
-             list(count=1,
-                  label='RESET',
-                  step='all'),
-             list(count=1,
-                  label='1 YR',
-                  step='year',
-                  stepmode='backward'),
-             list(count=3,
-                  label='3 MO',
-                  step='month',
-                  stepmode='backward'),
-             list(count=1,
-                  label='1 MO',
-                  step='month',
-                  stepmode='backward')
-           ))
-
-# subplot with shared x axis
-fig2 <- subplot(fig2, fig3, heights = c(0.7,0.2), nrows=2,
-               shareX = TRUE, titleY = TRUE)
-fig2 <- fig2 %>% layout(title = paste("BTC: " , date_band, " -",Sys.Date()),
-                      xaxis = list(rangeselector = rs),
-                      legend = list(orientation = 'h', x = 0.5, y = 1,
-                                    xanchor = 'center', yref = 'paper',
-                                    font = list(size = 10),
-                                    bgcolor = 'transparent'))
-
-fig2
+bitcoin_model_date <- as.data.frame(bitcoin_model$date)
+rsi <- as.data.frame(RSI(bitcoin_model$close,14))
+rsi <- cbind(bitcoin_model_date,rsi)
+colnames(rsi) <- c("date","rsi")
+bitcoin_model <- bitcoin_model %>% left_join(rsi)
 
 ```
-
 
