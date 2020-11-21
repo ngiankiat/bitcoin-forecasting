@@ -33,4 +33,24 @@ library(hablar) #for bollinger band analysis
 
 ```
 
+# **Additional Features added**
+## **Import the scrapped Bitcoin News Articles - Sentiments**
 
+* This is included because I feel that on top of technical analysis, sentiment analysis is also equally important. Although there is scraping of google hits, sentiments gathered from news articles can also be a possible feature to consider. This is because it can give us a general idea of people's opinions and sentiments about Bitcoin, which may be an equally good indicator as to how frequent people search bitcoin on the search engine.
+
+* This is to see if a positive/negative news will affect the next day or current day price of Bitcoin. The idea is to monitor the public mood about the Bitcoin market or perhaps if the Bitcoin prices will be affected by certain new regulations introduced. We can then see if there is any correlation between the sentiment and the closing price of bitcoin, and hopefully will add value to the model we are building to predict future prices of Bitcoin and give a recommendation if it is the right time to enter and buy Bitcoin.
+
+* Disclaimer and limitations in the news articles scrapped are mentioned in the 'Bitcoin News Analytics' RMarkdown.
+* The websites where the scrapping of news articles are done are also mentioned in that RMarkdown. 2 news site are used, though there may be concerns about the biasness of articles because it is taken from Bitcoin related websites, but results shown there are mixed sentiments on Bitcoin from the articles on those 2 websites chosen. There is no clear swayness towards positivity on Bitcoin.
+
+```{r}
+news_articles_sentiments_bing <- read.csv("bitcoin_sentiment_bing.csv")
+news_articles_sentiments_bing <- news_articles_sentiments_bing[-c(1)] # drop first column
+
+news_articles_sentiments_afinn <- read.csv("bitcoin_sentiment_afinn.csv")
+news_articles_sentiments_afinn <- news_articles_sentiments_afinn[-c(1)] # drop first column
+
+news_articles_sentiments_sentimentr <- read.csv("bitcoin_sentiment_sentimentr.csv")
+news_articles_sentiments_sentimentr <- news_articles_sentiments_sentimentr[-c(1)] # drop first column
+
+```
