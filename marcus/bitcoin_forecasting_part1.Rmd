@@ -74,6 +74,7 @@ colnames(fedfundsrate) <- c("date", "effr")
 fedfundsrate$effr[fedfundsrate$effr=="."] <- NA
 fedfundsrate <- fedfundsrate %>% map_df(na.locf)
 fedfundsrate$effr <- as.numeric(fedfundsrate$effr)
+
 ```
 
 # **Feature Engineering**
@@ -161,6 +162,102 @@ rsi <- as.data.frame(RSI(bitcoin_model$close,14))
 rsi <- cbind(bitcoin_model_date,rsi)
 colnames(rsi) <- c("date","rsi")
 bitcoin_model <- bitcoin_model %>% left_join(rsi)
+
+```
+
+## **MACD (Moving Average Convergence/Divergence)**
+* Buy signal arises when MACD crosses from below to above the signal line. (bullish signal) - price of the bitcoin is likely to experience upward momentum
+* Sell signal arises when MACD crosses from above to below the signal line. (bearish signal)
+
+```{r}
+# Usually, K = 9 days,  S = 12 days and L = 26 days
+
+myMACD <- function (x,price,S,L,K){
+  MACD <- EMA(price,S) - EMA(price,L)
+  signal <- EMA(MACD,K)
+  date <- x[,1]
+  price <- price
+  output <- cbind(date,price, MACD,signal)
+  colnames(output) <- c("date","closing_price", "MACD","signal")
+  return(output)
+}
+
+macd <- myMACD(bitcoin_price,Cl(bitcoin_price), 12, 26,9)
+tail(macd,n=5)
+
+macd <- macd %>% mutate(macd_signal_dist = MACD-signal)
+
+```
+
+```{r}
+# Since it was mentioned that traders use the MACD’s histogram to identify when bullish or bearish momentum is high, so we will only extract the distance calculated (MACD-signal) column to add into the bitcoin model.
+macd_df <- macd %>% select(c(date,macd_signal_dist))
+bitcoin_model <- bitcoin_model %>% left_join(macd_df)
+
+```
+
+## **Accumulation/Distribution Indicator**
+
+* The accumulation/distribution measure seeks to identify divergences between the stock price and volume flow. 
+* This provides insight into how strong a trend is. 
+* If the price is rising but the indicator is falling this indicates that buying or accumulation volume may not be enough to support the price rise and a price decline could be forthcoming.
+* A rising A/D line helps confirm a rising price trend.
+* A falling A/D line helps confirm a price downtrend.
+* If the price is rising but A/D is falling, it signals underlying weakness and a potential decline in price.
+* If the price of an asset is falling but A/D is rising, it signals underlying strength and the price may start to rise.
+
+```{r}
+acu_dis_df <- bitcoin_price
+acu_dis_df <- acu_dis_df %>% mutate(cmfv = ((bitcoin_price$close-bitcoin_price$low)-(bitcoin_price$high-bitcoin_price$close))/(bitcoin_price$high-bitcoin_price$low)*bitcoin_price$volume_currency)
+acu_dis_df$cmfv[is.na(acu_dis_df$cmfv)] <- 0
+acu_dis_df <- acu_dis_df %>% mutate(cumulative_cmfv = cumsum(cmfv))
+
+```
+
+```{r}
+
+acu_dis_df_add <- acu_dis_df %>% select(date,cumulative_cmfv)
+bitcoin_model <- bitcoin_model %>% left_join(acu_dis_df_add)
+
+```
+
+## **Bitcoin News Sentiments**
+
+```{r}
+# "bing"
+colnames(news_articles_sentiments_bing) <- c("date","positive_sentiment_bing")
+news_articles_sentiments_bing$date <- as.Date(news_articles_sentiments_bing$date)
+bitcoin_model <- bitcoin_model %>% 
+  left_join(news_articles_sentiments_bing)
+
+# "Afinn"
+colnames(news_articles_sentiments_afinn) <- c("date","positive_sentiment_afinn")
+news_articles_sentiments_afinn$date <- as.Date(news_articles_sentiments_afinn$date)
+bitcoin_model <- bitcoin_model %>% 
+  left_join(news_articles_sentiments_afinn)
+
+```
+
+```{r}
+#Using sentimentr
+
+news_articles_sentiments_sentimentr_extract <- select(news_articles_sentiments_sentimentr,c(article_date,ave_sentiment))
+news_articles_sentiments_sentimentr_extract <- news_articles_sentiments_sentimentr_extract %>%
+  mutate(positive_sentiment_sentimentr = ifelse(ave_sentiment>0,1,0))
+news_articles_sentiments_sentimentr_extract  <- select(news_articles_sentiments_sentimentr_extract, c(article_date,positive_sentiment_sentimentr))
+setnames(news_articles_sentiments_sentimentr_extract, "article_date", "date")
+news_articles_sentiments_sentimentr_extract$date <- as.Date(news_articles_sentiments_sentimentr_extract$date)
+bitcoin_model <- bitcoin_model %>% 
+  left_join(news_articles_sentiments_sentimentr_extract)
+
+```
+
+
+## **Fed Funds Rate**
+
+```{r}
+bitcoin_model <- bitcoin_model %>% left_join(fedfundsrate)
+bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
 
 ```
 
