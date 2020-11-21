@@ -1,0 +1,36 @@
+---
+title: "Bitcoin Forecasting"
+author: "Marcus Cheong Wei Ze"
+date: "21/11/2020"
+output: 
+---
+
+# **Load Packages**
+```{r,echo=FALSE, collapse=TRUE, message=FALSE}
+options(scipen = 99)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(almanac)
+library(lubridate)
+library(Quandl)
+library(gtrendsR)
+library(RcppRoll)
+library(xgboost)
+library(MLmetrics)
+library(pageviews)
+library(quantmod)
+library("doFuture"); registerDoFuture(); plan(multiprocess)
+library(tidyquant)
+library(tidymodels)
+library(tsfeatures)
+library(slider)
+library(timetk)
+library(data.table)
+library(grid)
+library(plotly) #for candlestick plot
+library(hablar) #for bollinger band analysis
+
+```
+
+
