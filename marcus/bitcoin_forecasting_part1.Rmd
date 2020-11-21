@@ -33,7 +33,7 @@ library(hablar) #for bollinger band analysis
 
 ```
 
-# **Additional Features added**
+# **Additional Features added (to consider)**
 ## **Import the scrapped Bitcoin News Articles - Sentiments**
 
 * This is included because I feel that on top of technical analysis, sentiment analysis is also equally important. Although there is scraping of google hits, sentiments gathered from news articles can also be a possible feature to consider. This is because it can give us a general idea of people's opinions and sentiments about Bitcoin, which may be an equally good indicator as to how frequent people search bitcoin on the search engine.
@@ -53,4 +53,23 @@ news_articles_sentiments_afinn <- news_articles_sentiments_afinn[-c(1)] # drop f
 news_articles_sentiments_sentimentr <- read.csv("bitcoin_sentiment_sentimentr.csv")
 news_articles_sentiments_sentimentr <- news_articles_sentiments_sentimentr[-c(1)] # drop first column
 
+```
+
+## **Federal Funds Rate**
+
+* Besides all the data that's scrapped, a research paper [#insert ref] has revealed that Federal Funds Rate is a possible influence on Bitcoin prices. FFR is the target interest rate set by the FOMC at which commercial banks borrow and lend their excess reserves to each other overnight. FOMC sets a target federal funds rate eight times a year, based on prevailing economic conditions.
+
+* As an investment asset, the US Federal Reserve’s Interest Rate Policy can have certain impact on Bitcoin price. Increase in the FFR may have adverse impact on Bitcoin price based on the following two assumptions: rise in US dollar and reduce in speculative investments. 
+  + First, the US dollar will benefit from the rate increase because raising interest rates may lead to capital flow back to the US market therefore cause Bitcoin price fell. 
+  + Second, increase in interest rate could reduce speculative investments. 
+* The data was downloaded from <a href="https://fred.stlouisfed.org/series/EFFR" target="_blank">this site</a>
+  
+```{r}
+fedfundsrate <- read.csv("fedfundsrate.csv")
+fedfundsrate$DATE <- as.Date(fedfundsrate$DATE)
+fedfundsrate <- subset(fedfundsrate, DATE>=as.Date("2011-09-13"))
+colnames(fedfundsrate) <- c("date", "effr")
+fedfundsrate$effr[fedfundsrate$effr=="."] <- NA
+fedfundsrate <- fedfundsrate %>% map_df(na.locf)
+fedfundsrate$effr <- as.numeric(fedfundsrate$effr)
 ```
