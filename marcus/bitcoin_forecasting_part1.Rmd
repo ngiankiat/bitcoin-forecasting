@@ -4,6 +4,20 @@ author: "Marcus Cheong Wei Ze"
 date: "21/11/2020"
 output: 
 ---
+Currently these are the additional features added:
+
+* **Sentiment**
+1. News Articles
+
+* **Technical**
+1. Bollinger Band Width
+2. RSI
+3. MACD
+4. Accumulation/Distribution Indicator
+
+* **Others**
+2. Fed Fund Rates
+
 
 # **Load Packages**
 ```{r,echo=FALSE, collapse=TRUE, message=FALSE}
