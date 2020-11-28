@@ -5,19 +5,31 @@ date: "21/11/2020"
 output: 
 ---
 
-**Currently these are the additional features added: (updated as of 26/11)**
+**Currently these are the additional features added: (updated as of 28/11)**
 
 * **Sentiment**
 1. News Articles
 
 * **Technical**
+I think some of the indicators might measure the same thing? Do help to remove any if its not a necessary feature.
+
 1. Bollinger Band Width
 2. RSI
 3. MACD
 4. Accumulation/Distribution Indicator
+5. EMA
+6. Rate of Change (it was mentioned that this can be combined with other indicators e.g. moving averages or stochastic to provide a better analysis?)
+7. On-Balance Volume
+8. Network Value to Transactions (NVT) - something similar to "P/E ratio"
+
 
 * **Others**
-2. Fed Fund Rates
+1. Fed Fund Rates
+2. S&P500 Closing Price
+3. Gold? (haven't add in, not sure)
+
+
+
 
 
 # **Load Packages**
@@ -276,7 +288,126 @@ bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
 
 ```
 
-## **TSI**
+## **S&P500 Closing Price**
+```{r}
+sp500 <- get_yahoo('^GSPC') %>%
+  select(date, sp500 = close)
+bitcoin_model <- bitcoin_model %>% left_join(sp500)
+
+```
+
+
+## **EMA**
+More weightage placed on recent data compared to using SMA
+
+```{r}
+bitcoin_date <- as.data.frame(bitcoin_price$date)
+colnames(bitcoin_date) <- c("date")
+ema <-EMA(Cl(bitcoin_price),n=20) %>% as.data.frame()
+ema <- bitcoin_date %>% cbind(ema)
+colnames(ema) <- c("date","EMA")
+
+bitcoin_model <- bitcoin_model %>% left_join(ema)
+
+```
+
+## **Rate of Change**
+
+The n value is how many periods ago the current price is being compared to. Smaller values will see the ROC react more quickly to price changes, but that can also mean more false signals. A larger value means the ROC will react slower, but the signals could be more meaningful when they occur.
+Short-term trader traders typically use a smaller number while longer-term investors use a larger number.
+
+```{r}
+# Assumptions:
+# short term: 14,28
+# longer term: 90,180,200
+
+bitcoin_roc <- list()
+range_roc <- c(14,28,90,180,200)
+for (i in seq_along(range_roc)){
+  bitcoin_roc_v <- ROC(Cl(bitcoin_price),n=i)
+  bitcoin_roc[[i]] <- bitcoin_roc_v
+}
+
+bitcoin_roc <- as.data.frame(do.call(cbind, bitcoin_roc)) 
+names_roc <- c(paste0("roc_", range_roc)) %>% strsplit(split = " ")
+colnames(bitcoin_roc) <- names_roc
+
+bitcoin_roc <- bitcoin_date %>% cbind(bitcoin_roc)
+
+```
+
+## **On-Balance Volume**
+On-balance volume and the accumulation/distribution line are similar in that they are both momentum indicators that use volume to predict the movement of “smart money”. 
+```{r}
+bitcoin_obv <- as.data.frame(OBV(bitcoin_price$close, bitcoin_price$volume_currency))
+bitcoin_obv <- bitcoin_date %>% cbind(bitcoin_obv)
+colnames(bitcoin_obv) <- c("date","on_balance_vol")
+
+```
+
+### **NVT Ratio**
+NVT Ratio (Network Value to Transactions Ratio) is similar to the PE Ratio used in equity markets.
+
+Similar to the price-to-earnings (PE) ratio used in equity charts, the NVT looks at whether BTC is undervalued or overvalued. The ratio represents current market capitalization via network value and the level of USD-based transaction volume over a 24-hour period.
+
+High NVT can indicate high growth or that the price may have reached an unsustainable level, while low NVT can signal market opportunity. 
+
+Using the bitcoin indicators data to do this calculation. It takes Bitcoin Market Capitalization/Bitcoin Estimated Transaction Volume USD
+```{r}
+# Data about bitcoin activity, transaction fees, and mining. 
+print("Downloading bitcoin indicators.")
+code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
+                  c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
+                  c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
+                  c("BCHAIN/ETRAV", "Bitcoin Estimated Transaction Volume BTC"), 
+                  c("BCHAIN/ETRVU", "Bitcoin Estimated Transaction Volume USD"), 
+                  c("BCHAIN/TRVOU", "Bitcoin USD Exchange Trade Volume"), 
+                  c("BCHAIN/NTRAN", "Bitcoin Number of Transactions"), 
+                  c("BCHAIN/NTRAT", "Bitcoin Total Number of Transactions"), 
+                  c("BCHAIN/NTREP", "Bitcoin Number of Transactions Excluding Popular Addresses"), 
+                  c("BCHAIN/NTRBL", "Bitcoin Number of Tansaction per Block"), 
+                  c("BCHAIN/ATRCT", "Bitcoin Median Transaction Confirmation Time"), 
+                  c("BCHAIN/TRFEE", "Bitcoin Total Transaction Fees"), 
+                  c("BCHAIN/TRFUS", "Bitcoin Total Transaction Fees USD"), 
+                  c("BCHAIN/CPTRA", "Bitcoin Cost Per Transaction"), 
+                  c("BCHAIN/CPTRV", "Bitcoin Cost % of Transaction Volume"), 
+                  c("BCHAIN/BLCHS", "Bitcoin api.blockchain Size"), 
+                  c("BCHAIN/AVBLS", "Bitcoin Average Block Size"), 
+                  c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"), 
+                  c("BCHAIN/HRATE", "Bitcoin Hash Rate"), 
+                  c("BCHAIN/MIREV", "Bitcoin Miners Revenue"), 
+                  c("BCHAIN/BCDDE", "Bitcoin Days Destroyed"), 
+                  c("BCHAIN/BCDDW", "Bitcoin Days Destroyed Minimum Age 1 Week"), 
+                  c("BCHAIN/BCDDM", "Bitcoin Days Destroyed Minimum Age 1 Month"), 
+                  c("BCHAIN/BCDDY", "Bitcoin Days Destroyed Minimum Age 1 Year") ,
+                  c("BCHAIN/BCDDC", "Bitcoin Days Destroyed Cumulative"))
+
+bitcoin_data <- tibble()
+# bitcoin_data <- foreach(i=seq_along(code_list), .combine='bind_rows') %dopar% {quandl_tidy(code_list[[i]][1], code_list[[i]][2])}
+for (i in seq_along(code_list)) { 
+  print(str_c("Downloading data for ", code_list[[i]][1], "."))
+  bitcoin_data <- bind_rows(bitcoin_data, 
+                            quandl_tidy(code_list[[i]][1], code_list[[i]][2]))
+}
+
+```
+
+```{r}
+# Clean Bitcoin Indicators
+bitcoin_data <- bitcoin_data %>% 
+  select(date, value, code) %>% 
+  spread(code, value)
+colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
+
+```
+
+```{r}
+# NVT
+bitcoin_data$nvt <- bitcoin_data$BCHAIN.MKTCP/bitcoin_data$BCHAIN.ETRVU
+
+```
+
+## **ATR**
 ```{r}
 
 
