@@ -18,9 +18,10 @@ I think some of the indicators might measure the same thing? Do help to remove a
 3. MACD
 4. Accumulation/Distribution Indicator
 5. EMA
-6. Rate of Change (it was mentioned that this can be combined with other indicators e.g. moving averages or stochastic to provide a better analysis?)
-7. On-Balance Volume
-8. Network Value to Transactions (NVT) - something similar to "P/E ratio"
+6. SMA
+7. Rate of Change (it was mentioned that this can be combined with other indicators e.g. moving averages or stochastic to provide a better analysis?)
+8. On-Balance Volume
+9. Network Value to Transactions (NVT) - something similar to "P/E ratio"
 
 
 * **Others**
@@ -310,6 +311,20 @@ colnames(ema) <- c("date","EMA")
 bitcoin_model <- bitcoin_model %>% left_join(ema)
 
 ```
+
+## **SMA**
+
+```{r}
+bitcoin_date <- as.data.frame(bitcoin_price$date)
+colnames(bitcoin_date) <- c("date")
+sma <-SMA(Cl(bitcoin_price),n=20) %>% as.data.frame()
+sma <- bitcoin_date %>% cbind(sma)
+colnames(sma) <- c("date","SMA")
+
+bitcoin_model <- bitcoin_model %>% left_join(sma)
+
+```
+
 
 ## **Rate of Change**
 
