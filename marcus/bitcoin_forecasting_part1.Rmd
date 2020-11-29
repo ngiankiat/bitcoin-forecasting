@@ -150,6 +150,11 @@ bitcoin_model <- bitcoin_model[-1, ]
 
 ```
 
+Using data from 2013 Oct onwards
+```{r}
+bitcoin_model <- bitcoin_model %>% filter(date >= '2013-10-01')
+```
+
 ## **Additional Features added (to consider)**
 
 ### **Bollinger Bands**
@@ -340,6 +345,8 @@ names_ema <- c(paste0("ema_", range_ema)) %>% strsplit(split = " ")
 colnames(bitcoin_ema) <- names_ema
 ema <- bitcoin_date %>% cbind(bitcoin_ema)
 
+bitcoin_model <- bitcoin_model %>% left_join(ema)
+
 # EMA: More weightage placed on recent price levels rather than past ones compared to using SMA
 ```
 
@@ -359,6 +366,8 @@ bitcoin_sma <- as.data.frame(do.call(cbind, bitcoin_sma))
 names_sma <- c(paste0("ema_", range_sma)) %>% strsplit(split = " ")
 colnames(bitcoin_sma) <- names_sma
 sma <- bitcoin_date %>% cbind(bitcoin_sma)
+
+bitcoin_model <- bitcoin_model %>% left_join(sma)
 
 ```
 
@@ -386,6 +395,8 @@ colnames(bitcoin_roc) <- names_roc
 
 bitcoin_roc <- bitcoin_date %>% cbind(bitcoin_roc)
 
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_roc)
+
 ```
 
 ## **On-Balance Volume**
@@ -394,6 +405,8 @@ On-balance volume and the accumulation/distribution line are similar in that the
 bitcoin_obv <- as.data.frame(OBV(bitcoin_price$close, bitcoin_price$volume_currency))
 bitcoin_obv <- bitcoin_date %>% cbind(bitcoin_obv)
 colnames(bitcoin_obv) <- c("date","on_balance_vol")
+
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_obv)
 
 ```
 
