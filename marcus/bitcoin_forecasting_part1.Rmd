@@ -10,7 +10,7 @@ output:
 * **Sentiment**
 1. News Articles
 2. If want to use reddit posts: can consider using <code>library(RedditExtractoR)</code> and <code>get_reddit(...)</code>
-
+3. If want to use Twitter (i can only think of using python <code>twint</code> which does not need API to scrape the tweets)
 
 * **Technical**
 Comments: 
