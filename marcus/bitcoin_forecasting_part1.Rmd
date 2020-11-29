@@ -5,32 +5,32 @@ date: "21/11/2020"
 output: 
 ---
 
-**Currently these are the additional features added: (updated as of 28/11)**
+**Currently these are the additional features added: (updated as of 29/11)**
 
 * **Sentiment**
 1. News Articles
 
 * **Technical**
-I think some of the indicators might measure the same thing? Do help to remove any if its not a necessary feature.
+Comments: 
+* I think some of the indicators might measure the same thing? Do help to remove any if its not a necessary feature.
+* Not sure if can combine say e.g. 2 different indicators into 1 indicator as a feature?
 
 1. Bollinger Band Width
 2. RSI
 3. MACD
 4. Accumulation/Distribution Indicator
-5. EMA
-6. SMA
+5. EMA (12,24,72 days)
+6. SMA (12,24,72 days)
 7. Rate of Change (it was mentioned that this can be combined with other indicators e.g. moving averages or stochastic to provide a better analysis?)
 8. On-Balance Volume
 9. Network Value to Transactions (NVT) - something similar to "P/E ratio"
+10. Average True Range (ATR)
 
 
 * **Others**
 1. Fed Fund Rates
 2. S&P500 Closing Price
 3. Gold? (haven't add in, not sure)
-
-
-
 
 
 # **Load Packages**
@@ -299,27 +299,46 @@ bitcoin_model <- bitcoin_model %>% left_join(sp500)
 
 
 ## **EMA**
-More weightage placed on recent data compared to using SMA
+
+Reference - Article Technical Analysis on the Bitcoin Market: Trading Opportunities or Investors’ Pitfall?
 
 ```{r}
+# 12-days EMA, 24-days EMA, 72-days EMA
+
 bitcoin_date <- as.data.frame(bitcoin_price$date)
 colnames(bitcoin_date) <- c("date")
-ema <-EMA(Cl(bitcoin_price),n=20) %>% as.data.frame()
-ema <- bitcoin_date %>% cbind(ema)
-colnames(ema) <- c("date","EMA")
 
-bitcoin_model <- bitcoin_model %>% left_join(ema)
+bitcoin_ema <- list()
+range_ema <- c(12,24,72)
+for (i in seq_along(range_ema)){
+  bitcoin_ema_v <- EMA(Cl(bitcoin_price),n=i)
+  bitcoin_ema[[i]] <- bitcoin_ema_v
+}
 
+bitcoin_ema <- as.data.frame(do.call(cbind, bitcoin_ema)) 
+names_ema <- c(paste0("ema_", range_ema)) %>% strsplit(split = " ")
+colnames(bitcoin_ema) <- names_ema
+ema <- bitcoin_date %>% cbind(bitcoin_ema)
+
+# EMA: More weightage placed on recent price levels rather than past ones compared to using SMA
 ```
 
 ## **SMA**
 
 ```{r}
-sma <-SMA(Cl(bitcoin_price),n=20) %>% as.data.frame()
-sma <- bitcoin_date %>% cbind(sma)
-colnames(sma) <- c("date","SMA")
+# 12-days SMA, 24-days SMA, 72-days SMA
 
-bitcoin_model <- bitcoin_model %>% left_join(sma)
+bitcoin_sma <- list()
+range_sma <- c(12,24,72)
+for (i in seq_along(range_sma)){
+  bitcoin_sma_v <- EMA(Cl(bitcoin_price),n=i)
+  bitcoin_sma[[i]] <- bitcoin_sma_v
+}
+
+bitcoin_sma <- as.data.frame(do.call(cbind, bitcoin_sma)) 
+names_sma <- c(paste0("ema_", range_sma)) %>% strsplit(split = " ")
+colnames(bitcoin_sma) <- names_sma
+sma <- bitcoin_date %>% cbind(bitcoin_sma)
 
 ```
 
@@ -420,8 +439,15 @@ bitcoin_data$nvt <- bitcoin_data$BCHAIN.MKTCP/bitcoin_data$BCHAIN.ETRVU
 
 ```
 
-## **ATR**
+## **Average True Range (ATR)**
+
+* a common indicator designed to measure volatility
+* neither indicates trend direction nor momentum --> so need other indicators to do that instead
+* experiencing a high level of volatility has a higher ATR, and a low volatility stock has a lower
 ```{r}
 
+atr <- ATR(bitcoin_price[,c("high","low","close")], n=14) #14-days moving average
+atr <- bitcoin_date %>% cbind(atr)
+atr <- select(atr,c(date,atr))
 
 ```
