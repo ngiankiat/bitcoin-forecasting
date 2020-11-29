@@ -1,8 +1,5 @@
 ---
 title: "Bitcoin Forecasting"
-author: "Marcus Cheong Wei Ze"
-date: "21/11/2020"
-output: 
 ---
 
 **Currently these are the additional features added: (updated as of 29/11)**
