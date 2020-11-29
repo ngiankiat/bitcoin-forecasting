@@ -26,13 +26,13 @@ Comments:
 7. Rate of Change (it was mentioned that this can be combined with other indicators e.g. moving averages or stochastic to provide a better analysis?)
 8. On-Balance Volume
 9. Network Value to Transactions (NVT) - something similar to "P/E ratio"
-10. Average True Range (ATR)
+10. Average True Range (ATR) - measures volatility
 
 
 * **Others**
 1. Fed Fund Rates
 2. S&P500 Closing Price
-3. Gold? (haven't add in, not sure)
+3. Gold (XAU/USD)
 
 
 # **Load Packages**
@@ -107,6 +107,18 @@ fedfundsrate$effr <- as.numeric(fedfundsrate$effr)
 
 ```
 
+## **Gold Price**
+* XAU/USD
+
+```{r}
+head(xau_usd_historical)
+xau_usd_historical$Date <- as.Date(xau_usd_historical$Date, format="%B %d, %Y")
+xau_usd_df <- select(xau_usd_historical,c(Date,Price))
+colnames(xau_usd_df) <- c("date","price")
+
+```
+
+
 # **Feature Engineering**
 
 ## BITCOIN PRICE DATA
@@ -171,10 +183,16 @@ row.names(df_1) <- NULL
 # if the width becomes narrower, it indicates that it will expands next which signals buy
 df_1 <- df_1 %>% mutate(bb_width = (up-dn)/mavg)
 
+#Another way:
+#When %B is above 1, price is above the upper band and when %B is below 0, price is below the lower band.
+# %B used to quantify the distance between price and the upper or lower band.
+df_1 <- df_1 %>% mutate(bb_percent_b = (close-dn)/(up-dn))
+
+
 ```
 
 ```{r}
-bb_df <- df_1 %>% select(c(date,bb_width))
+bb_df <- df_1 %>% select(c(date,bb_width,bb_percent_b))
 bitcoin_model <- bitcoin_model %>% left_join(bb_df)
 
 ```
