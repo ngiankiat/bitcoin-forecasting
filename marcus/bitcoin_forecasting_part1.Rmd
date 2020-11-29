@@ -9,6 +9,8 @@ output:
 
 * **Sentiment**
 1. News Articles
+2. If want to use reddit posts: can consider using <code>library(RedditExtractoR)</code> and <code>get_reddit(...)</code>
+
 
 * **Technical**
 Comments: 
