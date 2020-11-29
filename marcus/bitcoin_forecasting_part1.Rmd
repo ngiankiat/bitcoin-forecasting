@@ -111,7 +111,6 @@ fedfundsrate$effr <- as.numeric(fedfundsrate$effr)
 * XAU/USD
 
 ```{r}
-head(xau_usd_historical)
 xau_usd_historical$Date <- as.Date(xau_usd_historical$Date, format="%B %d, %Y")
 xau_usd_df <- select(xau_usd_historical,c(Date,Price))
 colnames(xau_usd_df) <- c("date","price")
@@ -148,11 +147,6 @@ bitcoin_model <- bitcoin_price %>%
 
 bitcoin_model <- bitcoin_model[-1, ]
 
-```
-
-Using data from 2013 Oct onwards
-```{r}
-bitcoin_model <- bitcoin_model %>% filter(date >= '2013-10-01')
 ```
 
 ## **Additional Features added (to consider)**
@@ -319,6 +313,8 @@ bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
 sp500 <- get_yahoo('^GSPC') %>%
   select(date, sp500 = close)
 bitcoin_model <- bitcoin_model %>% left_join(sp500)
+# fill na downwards for weekend missing values - fill with fri closing price
+bitcoin_model <- bitcoin_model %>% fill(sp500, .direction = "down")
 
 ```
 
@@ -463,13 +459,16 @@ bitcoin_data <- bitcoin_data %>%
   select(date, value, code) %>% 
   spread(code, value)
 colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
+names(bitcoin_data) <- tolower(names(bitcoin_data))
 
 ```
 
 ```{r}
 # NVT
-bitcoin_data$nvt <- bitcoin_data$BCHAIN.MKTCP/bitcoin_data$BCHAIN.ETRVU
+bitcoin_data$nvt <- bitcoin_data$bchain.mktcp/bitcoin_data$bchain.etrvu
+bitcoin_data_nvt <- select(bitcoin_data,c(date,nvt))
 
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_data_nvt)
 ```
 
 ## **Average True Range (ATR)**
@@ -483,4 +482,14 @@ atr <- ATR(bitcoin_price[,c("high","low","close")], n=14) #14-days moving averag
 atr <- bitcoin_date %>% cbind(atr)
 atr <- select(atr,c(date,atr))
 
+bitcoin_model <- bitcoin_model %>% left_join(atr)
 ```
+
+
+# **Predictive Modelling**
+
+Using data from 2013 Oct onwards
+```{r}
+bitcoin_model <- bitcoin_model %>% filter(date >= '2013-10-01')
+```
+
