@@ -12,7 +12,7 @@ output:
       collapsed: yes
       smooth_scroll: no
 editor_options:
-  # chunk_output_type: console
+  chunk_output_type: inline
 ---
 # 1. Load Packages
 
@@ -28,20 +28,18 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r}
-library(tidyverse)
-library(stringr)
-library(gtrendsR)
+```{r load libraries}
+# Load time series libraries
+library(sweep)      # Broom-style tidiers for the forecast package
+library(forecast)   # Forecasting models and predictions package
+library(tidyquant)  # Loads tidyverse, financial pkgs, used to get data
+library(timetk)     # Functions working with time series
+
+# Library for scraping Bitcoin data
 library(Quandl)
-library(quantmod)
-library(RcppRoll)
-library(lubridate)
-library(tidyquant)
-library(tidymodels)
-library(tsfeatures)
-library(slider)
-library(timetk)
-library(data.table)
+
+# Library for data manipulation
+library(tidyverse)
 ```
 
 # 2. Scrape Bitcoin Data
@@ -50,7 +48,7 @@ library(data.table)
 
 The quandl_tidy function is a wrapper around the Quandl function that returns a cleaner tibble.
 
-```{r}
+```{r function for formatting imported data}
 Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
 
 quandl_tidy <- function(code, name) { 
@@ -65,7 +63,7 @@ quandl_tidy <- function(code, name) {
 
 ## 2.2 Bitcoin Exchange Rate Data
 
-```{r}
+```{r import Bitcoin prices}
 bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD") %>%
   arrange(Date) %>%
   as_tibble()
@@ -77,7 +75,7 @@ colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc
 
 Data about bitcoin activity, transaction fees and mining.
 
-```{r}
+```{r import other Bitcoin indicators}
 code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
                   c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
                   c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
@@ -122,8 +120,172 @@ bitcoin_data <- bitcoin_data %>%
 colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
 ```
 
-```{r, echo = FALSE}
+```{r remove local variables used to import data, echo = FALSE}
 rm(code_list, i, quandl_tidy)
 ```
 
+After importing the Bitcoin price data, we narrow our focus to the Bitcoin daily closing prices. Note that there are some days where the closing price is $0. In those cases, we will use the previous day's closing price to fill these values
+
+```{r narrow scope to Bitcoin closing price}
+bitcoin_price_tbl <- 
+  bitcoin_price %>% 
+  select(date, close) %>%
+  mutate(close = ifelse(close == 0, NA, close)) %>% # replace 0s with NAs
+  fill(close, .direction = c("down")) %>%           # fill NAs with previous day's closing price
+  rename(price = close) %>%
+  as_tibble()
+
+head(bitcoin_price_tbl)
+```
+
+Split the data into training and testing data to test accuracy of forecasts. For now, we will set the forecast period to 365 days (or 1 year).
+
+```{r train test split}
+# Keep last 365 days as test data
+bitcoin_price_test_tbl <- tail(bitcoin_price_tbl, n = 365)
+
+# Remove test data rows from original dataset
+bitcoin_price_train_tbl <- 
+  bitcoin_price_tbl %>% 
+  filter(row_number() <= n()-365)
+```
+
+
+
 # 3. Time Series
+
+Source: [Tidy Forecasting with sweep](https://www.business-science.io/code-tools/2017/10/25/demo_week_sweep.html)
+
+## 3.1 Visualisation
+
+We begin by visualising the daily closing prices for Bitcoin over the time period of the data. 
+
+```{r visualise Bitcoin daily closing prices}
+# Plot daily Bitcoin closing prices
+bitcoin_price_train_tbl %>%
+    ggplot(aes(date, price)) +
+    geom_line(col = palette_light()[6]) +
+    geom_ma(ma_fun = SMA, n = 365, size = 1, col = palette_light()[2]) +
+    theme_tq() +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    scale_y_continuous(labels = scales::dollar_format())
+    labs(title = "Bitcoin Prices: Sep 2011 through Nov 2019")
+```
+
+## 3.2 ARIMA Forecasting
+
+Convert Bitcoin daily closing price data from `tbl` to a `ts` object.
+
+```{r convert from tbl to ts}
+# Convert from tbl to ts
+bitcoin_price_ts <- tk_ts(bitcoin_price_train_tbl, start = bitcoin_price_tbl$date[1], freq = 365)
+
+# Check that ts-object has a timetk index
+# This will be important when using sw_sweep() later
+has_timetk_idx(bitcoin_price_ts)
+```
+
+Use the `auto.arima()` function from the `forecast` package to model the time series
+
+```{r auto-arima}
+# Model using auto.arima
+fit_arima <- auto.arima(bitcoin_price_ts)
+
+fit_arima
+```
+
+Tidy the model using `sweep` functions:
+
+* `sw_tidy()`: Get model coefficients
+* `sw_glance()`: Get model description and training set accuracy metrics
+* `sw_augment()`: Get model residuals
+
+```{r tidy model}
+# sw_tidy - Get model coefficients
+sw_tidy(fit_arima)
+
+# sw_glance - Get model description and training set accuracy measures
+sw_glance(fit_arima) %>%
+    glimpse()
+
+# sw_augment - get model residuals
+sw_augment(fit_arima, timetk_idx = TRUE)
+
+# plot residuals
+sw_augment(fit_arima, timetk_idx = TRUE) %>%
+    ggplot(aes(x = index, y = .resid)) +
+    geom_point() + 
+    geom_hline(yintercept = 0, color = "red") + 
+    labs(title = "Residual Diagnostic") +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    theme_tq()
+```
+
+Use the `forecast()` function to forecast Bitcoin prices for the next month.
+
+```{r construct forecast table}
+# Forecast next 30 days
+fcast_arima <- forecast(fit_arima, h = 365)
+
+# Check if forecast has timetk index
+has_timetk_idx(fcast_arima)
+
+# tidy forecast output
+fcast_tbl <- sw_sweep(fcast_arima, timetk_idx = TRUE)
+
+fcast_tbl
+```
+
+Compare ARIMA forecasts with actual Bitcoin prices from Dec 2019 to Nov 2020.
+
+```{r forecast visualisation}
+# Visualize the forecast with ggplot
+fcast_tbl %>%
+    ggplot(aes(x = index, y = price, color = key)) +
+    # 95% CI
+    geom_ribbon(aes(ymin = lo.95, ymax = hi.95), 
+                fill = "#D5DBFF", color = NA, size = 0) +
+    # 80% CI
+    geom_ribbon(aes(ymin = lo.80, ymax = hi.80, fill = key), 
+                fill = "#596DD5", color = NA, size = 0, alpha = 0.8) +
+    # Prediction
+    geom_line() +
+    # geom_point() +
+    # Actuals
+    geom_line(aes(x = date, y = price), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
+    # geom_point(aes(x = date, y = price), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
+    # Aesthetics
+    labs(title = "Bitcoin Prices Forecast: ARIMA", x = "", y = "Closing Price",
+         subtitle = "subtitle") +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    scale_y_continuous(labels = scales::dollar_format()) +
+    scale_color_tq() +
+    scale_fill_tq() +
+    theme_tq()
+```
+
+Calculate errors for forecast Bitcoin prices.
+
+```{r forecast error metrics}
+# Investigate test error 
+error_tbl <- left_join(bitcoin_price_test_tbl, fcast_tbl, by = c("date" = "index")) %>%
+    rename(actual = price.x, pred = price.y) %>%
+    select(date, actual, pred) %>%
+    mutate(
+        error     = actual - pred,
+        error_pct = error / actual
+        )
+
+# Calculate test error metrics
+test_residuals <- error_tbl$error
+test_error_pct <- error_tbl$error_pct * 100 # Percentage error
+
+me   <- mean(test_residuals, na.rm=TRUE)
+rmse <- mean(test_residuals^2, na.rm=TRUE)^0.5
+mae  <- mean(abs(test_residuals), na.rm=TRUE)
+mape <- mean(abs(test_error_pct), na.rm=TRUE)
+mpe  <- mean(test_error_pct, na.rm=TRUE)
+
+tibble(me, rmse, mae, mape, mpe) %>% glimpse()
+```
+
