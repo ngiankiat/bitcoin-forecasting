@@ -315,8 +315,6 @@ bitcoin_model <- bitcoin_model %>% left_join(ema)
 ## **SMA**
 
 ```{r}
-bitcoin_date <- as.data.frame(bitcoin_price$date)
-colnames(bitcoin_date) <- c("date")
 sma <-SMA(Cl(bitcoin_price),n=20) %>% as.data.frame()
 sma <- bitcoin_date %>% cbind(sma)
 colnames(sma) <- c("date","SMA")
