@@ -2,7 +2,7 @@
 title: "Bitcoin Forecasting"
 ---
 
-**Currently these are the additional features added: (updated as of 29/11)**
+**Currently these are the additional features added: (updated as of 30/11)**
 
 * **Sentiment**
 1. News Articles
@@ -30,6 +30,10 @@ Comments:
 1. Fed Fund Rates
 2. S&P500 Closing Price
 3. Gold (XAU/USD)
+A paper uses the following below: [Link](https://arxiv.org/ftp/arxiv/papers/1706/1706.01437.pdf)
+4. Financial stress index
+5. AAII Sentiment - Is a weekly data, but since the bitcoin price is daily, i just fill the days with the week data, not sure if that's ok?
+7. CNY/USD 
 
 
 # **Load Packages**
@@ -118,6 +122,26 @@ colnames(xau_usd_df) <- c("date","price")
 # **Feature Engineering**
 
 ## BITCOIN PRICE DATA
+
+```{r}
+# The quandl_tidy function is a wrapper around the Quandl function that returns a cleaner tibble.  
+Quandl.api_key("s6CuJx8yVodVwU-ymz_5")
+quandl_tidy <- function(code, name) { 
+  df <- Quandl(code) %>% 
+    mutate(code = code, name = name) %>% 
+    rename(date = Date, value = Value) %>% 
+    arrange(date) %>% 
+    as_tibble()
+  return(df)
+}
+
+bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD") %>% 
+  arrange(Date) %>% 
+  as_tibble()
+
+colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
+
+```
 
 ### Cleaning Bitcoin Prices
 ```{r}
@@ -307,6 +331,20 @@ bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
 
 ## **S&P500 Closing Price**
 ```{r}
+get_yahoo <- function(ticker) {
+  
+  df <- getSymbols(ticker, src = 'yahoo', auto.assign = FALSE, from = '1900-01-01')
+  
+  df <- df %>%
+    as_tibble() %>%
+    mutate(date = index(df))
+  
+  colnames(df) <- c("open", "high", "low", "close", "volume", "adjusted_close", "date", "ticker")
+  
+  return(df)
+  
+}
+
 sp500 <- get_yahoo('^GSPC') %>%
   select(date, sp500 = close)
 bitcoin_model <- bitcoin_model %>% left_join(sp500)
@@ -351,12 +389,12 @@ bitcoin_model <- bitcoin_model %>% left_join(ema)
 bitcoin_sma <- list()
 range_sma <- c(12,24,72)
 for (i in seq_along(range_sma)){
-  bitcoin_sma_v <- EMA(Cl(bitcoin_price),n=i)
+  bitcoin_sma_v <- SMA(Cl(bitcoin_price),n=i)
   bitcoin_sma[[i]] <- bitcoin_sma_v
 }
 
 bitcoin_sma <- as.data.frame(do.call(cbind, bitcoin_sma)) 
-names_sma <- c(paste0("ema_", range_sma)) %>% strsplit(split = " ")
+names_sma <- c(paste0("sma_", range_sma)) %>% strsplit(split = " ")
 colnames(bitcoin_sma) <- names_sma
 sma <- bitcoin_date %>% cbind(bitcoin_sma)
 
@@ -482,6 +520,60 @@ atr <- select(atr,c(date,atr))
 bitcoin_model <- bitcoin_model %>% left_join(atr)
 ```
 
+## **Financial stress index**
+
+https://www.financialresearch.gov/financial-stress-index/
+
+* The OFR Financial Stress Index (OFR FSI) is a daily market-based snapshot of stress in global financial markets. It is constructed from 33 financial market variables, such as yield spreads, valuation measures, and interest rates. The OFR FSI is positive when stress levels are above average, and negative when stress levels are below average.
+
+* The OFR FSI incorporates five categories of indicators: credit, equity valuation, funding, safe assets and volatility. The FSI shows stress contributions by three regions: United States, other advanced economies, and emerging markets. The value of the OFR FSI on a given day is the weighted average level of each variable observed in the market on that day, relative to its history. The index is zero when this average is zero, suggesting that stress is at normal levels. The index is calculated after each U.S. trading day.
+
+```{r}
+# use the FSI data from the csv
+fsi_df <- fsi %>% select(date="Date", ofr_fsi = "OFR FSI")
+fsi_df$date <- as.Date(fsi_df$date)
+                             
+bitcoin_model <- bitcoin_model %>% left_join(fsi_df)
+
+#weekend missing, fill by fri's numbers
+bitcoin_model <- bitcoin_model %>% fill(ofr_fsi,.direction = "down")
+
+```
+
+## **AAII Sentiment**
+* The AAII Investor Sentiment Survey measures the percentage of individual investors who are bullish, bearish, and neutral on the stock market for the next six months; individuals are polled from the ranks of the AAII membership on a weekly basis. Only one vote per member is accepted in each weekly voting period.
+
+* Since this AAII sentiment (comprises bullish, neutral and bearish sentiment) is for stock market, we take the assumption that bitcoin is seen as a "safe haven" compared to stock, so we will take the bearish sentiment.
+
+```{r}
+# The quandl_tidy function is a wrapper around the Quandl function that returns a cleaner tibble.  
+Quandl.api_key("s6CuJx8yVodVwU-ymz_5")
+
+aaii_sentiment <- Quandl("AAII/AAII_SENTIMENT") %>% 
+  arrange(Date) %>% 
+  as_tibble()
+
+aaii_sentiment_df <- aaii_sentiment %>% select(date="Date", aaii_bearish_sentiment = "Bearish")
+
+bitcoin_model <- bitcoin_model %>% left_join(aaii_sentiment_df)
+
+bitcoin_model <- bitcoin_model %>% fill(aaii_bearish_sentiment,.direction = "up")
+
+```
+
+## **CNY/USD**
+* Bitcoin is mostly traded in China [Reference](https://www.businessinsider.com/bitcoin-trading-china-yuan-remnibi-2017-1)
+* Chinese mining pools control more than 60% of the Bitcoin network’s collective hashrate [Reference](https://news.bitcoin.com/65-of-global-bitcoin-hashrate-concentrated-in-china/) and one-third of global hash rate is in Xinjiang.  [Reference](https://cointelegraph.com/news/a-single-chinese-region-accounts-for-one-third-of-global-btc-hash-rate)
+* So it might be worthwhile to account for movements in the exchanges between the dollar with the yuan 
+
+```{r}
+cny_usd <- get_yahoo('USDCNY=X') %>%
+  select(date, cny_usd_close = close)
+bitcoin_model <- bitcoin_model %>% left_join(cny_usd)
+
+# fill na downwards for weekend missing values - fill with fri closing price
+bitcoin_model <- bitcoin_model %>% fill(cny_usd_close, .direction = "down")
+```
 
 # **Predictive Modelling**
 
