@@ -2,7 +2,7 @@
 title: "Bitcoin Forecasting"
 ---
 
-**Currently these are the additional features added: (updated as of 30/11)**
+**Currently these are the additional features added: (updated as of 01/12)**
 
 * **Sentiment**
 1. News Articles
