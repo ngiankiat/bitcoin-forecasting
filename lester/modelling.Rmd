@@ -36,8 +36,8 @@ library(tidyquant)  # Functions for collecting and analyzing financial data
 
 ```{r}
 # Set dates for this project. YMD Format.
-sDate = "2013-01-01"
-eDate = "2020-11-26"
+sDate = "2018-01-01"
+eDate = "2020-11-30"
 ```
 
 
@@ -50,10 +50,10 @@ eDate = "2020-11-26"
 #   arrange(Date) %>%
 #   as_tibble()
 # colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
-# write_csv(bitcoin_price, 'data/bitcoin_prices.csv')
+# write_csv(bitcoin_price, 'data/bitcoin_price.csv')
 
 # Read Data
-bitcoin_price <- read_csv("data/bitcoin_prices.csv")
+bitcoin_price <- read_csv("data/bitcoin_price.csv")
 
 # Cleaning
 bitcoin_price[bitcoin_price == 0] <- NA
@@ -74,7 +74,7 @@ bitcoin_model <- bitcoin_price %>%
 bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
 ```
 
-# 2.2 Getting Bitcoin Indicators
+# 2.2 Getting Bitcoin Features
 ```{r}
 # quandl_tidy <- function(code, name, start_date, end_date) {
 #   df <- Quandl(code, start_date = start_date, end_date = end_date) %>%
@@ -110,16 +110,23 @@ bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
 # colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
 # 
 # write_csv(bitcoin_data, "data/bitcoin_indicators.csv")
-
-bitcoin_data <- read_csv("data/bitcoin_indicators.csv")
-bitcoin_data <- bitcoin_data[-nrow(bitcoin_data), ]  # Remove lastest date to match bitcoin prices and future returns
+# 
+# bitcoin_data <- read_csv("data/bitcoin_indicators.csv")
+# bitcoin_data <- bitcoin_data[-nrow(bitcoin_data), ]  # Remove lastest date to match bitcoin prices and future returns
 ```
+
+```{r}
+# Importing features from Marcus
+bitcoin_features <- read_csv("data/bitcoin_features.csv")
+bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove lastest date to match bitcoin prices and future returns
+```
+
 
 # 2.3 Merge all data into 1 tibble
 ```{r}
 # Combine price data with features
 bitcoin_model <- bitcoin_model %>%
-  left_join(bitcoin_data, by="date")
+  left_join(bitcoin_features, by="date")
 ```
 
 
