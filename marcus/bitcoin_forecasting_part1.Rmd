@@ -76,7 +76,7 @@ library(hablar) #for bollinger band analysis
 * Disclaimer and limitations in the news articles scrapped are mentioned in the 'Bitcoin News Analytics' RMarkdown.
 * The websites where the scrapping of news articles are done are also mentioned in that RMarkdown. 2 news site are used, though there may be concerns about the biasness of articles because it is taken from Bitcoin related websites, but results shown there are mixed sentiments on Bitcoin from the articles on those 2 websites chosen. There is no clear swayness towards positivity on Bitcoin.
 
-```{r}
+```{r,eval=FALSE}
 news_articles_sentiments_bing <- read.csv("bitcoin_sentiment_bing.csv")
 news_articles_sentiments_bing <- news_articles_sentiments_bing[-c(1)] # drop first column
 
@@ -98,7 +98,7 @@ news_articles_sentiments_sentimentr <- news_articles_sentiments_sentimentr[-c(1)
 * The data was downloaded from <a href="https://fred.stlouisfed.org/series/EFFR" target="_blank">this site</a>
   
 ```{r}
-fedfundsrate <- read.csv("fedfundsrate.csv")
+#Import data first
 fedfundsrate$DATE <- as.Date(fedfundsrate$DATE)
 fedfundsrate <- subset(fedfundsrate, DATE>=as.Date("2011-09-13"))
 colnames(fedfundsrate) <- c("date", "effr")
@@ -112,9 +112,10 @@ fedfundsrate$effr <- as.numeric(fedfundsrate$effr)
 * XAU/USD
 
 ```{r}
+#Import data first
 xau_usd_historical$Date <- as.Date(xau_usd_historical$Date, format="%B %d, %Y")
 xau_usd_df <- select(xau_usd_historical,c(Date,Price))
-colnames(xau_usd_df) <- c("date","price")
+colnames(xau_usd_df) <- c("date","gold_price")
 
 ```
 
@@ -291,7 +292,7 @@ bitcoin_model <- bitcoin_model %>% left_join(acu_dis_df_add)
 
 ## **Bitcoin News Sentiments**
 
-```{r}
+```{r,eval=FALSE}
 # "bing"
 colnames(news_articles_sentiments_bing) <- c("date","positive_sentiment_bing")
 news_articles_sentiments_bing$date <- as.Date(news_articles_sentiments_bing$date)
@@ -306,7 +307,7 @@ bitcoin_model <- bitcoin_model %>%
 
 ```
 
-```{r}
+```{r,eval=FALSE}
 #Using sentimentr
 
 news_articles_sentiments_sentimentr_extract <- select(news_articles_sentiments_sentimentr,c(article_date,ave_sentiment))
@@ -328,6 +329,14 @@ bitcoin_model <- bitcoin_model %>% left_join(fedfundsrate)
 bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
 
 ```
+
+## **Gold Price**
+```{r}
+bitcoin_model <- bitcoin_model %>% left_join(xau_usd_df)
+bitcoin_model <- bitcoin_model %>% fill(gold_price,.direction = "down")
+
+```
+
 
 ## **S&P500 Closing Price**
 ```{r}
@@ -529,7 +538,7 @@ https://www.financialresearch.gov/financial-stress-index/
 * The OFR FSI incorporates five categories of indicators: credit, equity valuation, funding, safe assets and volatility. The FSI shows stress contributions by three regions: United States, other advanced economies, and emerging markets. The value of the OFR FSI on a given day is the weighted average level of each variable observed in the market on that day, relative to its history. The index is zero when this average is zero, suggesting that stress is at normal levels. The index is calculated after each U.S. trading day.
 
 ```{r}
-# use the FSI data from the csv
+#Import data first
 fsi_df <- fsi %>% select(date="Date", ofr_fsi = "OFR FSI")
 fsi_df$date <- as.Date(fsi_df$date)
                              
@@ -579,6 +588,6 @@ bitcoin_model <- bitcoin_model %>% fill(cny_usd_close, .direction = "down")
 
 Using data from 2013 Oct onwards
 ```{r}
-bitcoin_model <- bitcoin_model %>% filter(date >= '2013-10-01')
+bitcoin_model <- subset(bitcoin_model, date>= "2013-10-01" & date <= "2020-11-26")
 ```
 
