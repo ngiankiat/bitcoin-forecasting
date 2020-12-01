@@ -8,6 +8,8 @@ title: "Bitcoin Forecasting"
 1. News Articles
 2. If want to use reddit posts: can consider using <code>library(RedditExtractoR)</code> and <code>get_reddit(...)</code>
 3. If want to use Twitter (i can only think of using python <code>twint</code> which does not need API to scrape the tweets)
+  + As of now, gathered the total volume of tweets with regards to Bitcoin (without any scraping)
+  + No sentiment analysis conducted
 
 * **Technical**
 Comments: 
@@ -583,6 +585,23 @@ bitcoin_model <- bitcoin_model %>% left_join(cny_usd)
 # fill na downwards for weekend missing values - fill with fri closing price
 bitcoin_model <- bitcoin_model %>% fill(cny_usd_close, .direction = "down")
 ```
+
+## **Twitter Volume - Bitcoin**
+
+* The data is extracted from Sprout Social which is a social media software company headquartered in Chicago.
+* It only has data of bitcoin related tweets starting Dec 2013.
+* The purpose of using this data is to see if the volume of the tweets (capture social media attention) affects the prices of bitcoin.
+
+```{r}
+twitter_volume$date <- as.Date(twitter_volume$date)
+colnames(twitter_volume) <- c("date", "tweets_volume")
+
+bitcoin_model <- bitcoin_model %>% left_join(twitter_volume)
+
+bitcoin_model$tweets_volume[is.na(bitcoin_model$tweets_volume)] <- 0 # Replace the missing value before dec 2013 with 0
+
+```
+
 
 # **Predictive Modelling**
 
