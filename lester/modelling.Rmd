@@ -30,11 +30,12 @@ knitr::opts_chunk$set(
 ```{r}
 library(tidyverse)  # Data manipulation
 library(tidymodels) # Building machine learning workflows and models
-library(Quandl) # Library for scraping Bitcoin data
+library(Quandl) # Download datasets
+library(tidyquant)  # Functions for collecting and analyzing financial data
 ```
 
 ```{r}
-# Set dates for this project
+# Set dates for this project. YMD Format.
 sDate = "2013-01-01"
 eDate = "2020-11-26"
 ```
@@ -43,42 +44,62 @@ eDate = "2020-11-26"
 # 2. Extracting Data/Adding features
 # 2.1 Getting Bitcoin Prices
 ```{r}
+# Get Bitcoin prices from Quandl. YMD.
 # Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
-# # Get bitcoin price in YMD
 # bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD", start_date=sDate, end_date=eDate) %>%
 #   arrange(Date) %>%
 #   as_tibble()
 # colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
 # write_csv(bitcoin_price, 'data/bitcoin_prices.csv')
 
-bitcoin_prices <- read_csv("data/bitcoin_prices.csv")
+# Read Data
+bitcoin_price <- read_csv("data/bitcoin_prices.csv")
+
+# Cleaning
+bitcoin_price[bitcoin_price == 0] <- NA
+bitcoin_price <- bitcoin_price %>%
+  map_df(na.locf)
+
+# Defining Target
+bitcoin_model <- bitcoin_price %>%
+  tq_mutate(select = close,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
+            col_rename = 'future_return') %>%
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)),
+         close = lag(close, 1),
+         date = date - days(1)) %>%
+  select(date, close, future_return, future_return_sign)
+bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
 ```
 
 # 2.2 Getting Bitcoin Indicators
 ```{r}
-# quandl_tidy <- function(code, name, start_date, end_date) { 
-#   df <- Quandl(code, start_date = start_date, end_date = end_date) %>% 
-#     mutate(code = code, name = name) %>% 
-#     rename(date = Date, value = Value) %>% 
-#     arrange(date) %>% 
+# quandl_tidy <- function(code, name, start_date, end_date) {
+#   df <- Quandl(code, start_date = start_date, end_date = end_date) %>%
+#     mutate(code = code, name = name) %>%
+#     rename(date = Date, value = Value) %>%
+#     arrange(date) %>%
 #     as_tibble()
 #   return(df)
 # }
 # 
-# code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
-#                   c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
-#                   c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
-#                   c("BCHAIN/AVBLS", "Bitcoin Average Block Size"), 
-#                   c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"), 
-#                   c("BCHAIN/HRATE", "Bitcoin Hash Rate"), 
+# # Only shortlisted a few for simplicity. To add more.
+# code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"),
+#                   c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"),
+#                   c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"),
+#                   c("BCHAIN/AVBLS", "Bitcoin Average Block Size"),
+#                   c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"),
+#                   c("BCHAIN/HRATE", "Bitcoin Hash Rate"),
 #                   c("BCHAIN/MIREV", "Bitcoin Miners Revenue"))
 # 
 # bitcoin_data <- tibble()
 # 
 # # Query from Quandl and returns data in long format
-# for (i in seq_along(code_list)) { 
+# for (i in seq_along(code_list)) {
 #   print(str_c("Downloading data for ", code_list[[i]][1], "."))
-#   bitcoin_data <- bind_rows(bitcoin_data, 
+#   bitcoin_data <- bind_rows(bitcoin_data,
 #                             quandl_tidy(code_list[[i]][1], code_list[[i]][2], sDate, eDate))
 # }
 # 
@@ -91,6 +112,47 @@ bitcoin_prices <- read_csv("data/bitcoin_prices.csv")
 # write_csv(bitcoin_data, "data/bitcoin_indicators.csv")
 
 bitcoin_data <- read_csv("data/bitcoin_indicators.csv")
+bitcoin_data <- bitcoin_data[-nrow(bitcoin_data), ]  # Remove lastest date to match bitcoin prices and future returns
+```
+
+# 2.3 Merge all data into 1 tibble
+```{r}
+# Combine price data with features
+bitcoin_model <- bitcoin_model %>%
+  left_join(bitcoin_data, by="date")
+```
+
+
+# 3. Data Splitting and Resampling
+```{r}
+set.seed(123)
+
+splits <- initial_split(hotels, strata = children)
+```
+
+# 4. Create Recipe
+```{r}
+
+```
+
+# 5. Define Model
+```{r}
+
+```
+
+# 6. Create Workflow
+```{r}
+
+```
+
+# 7. Create grid for tuning
+```{r}
+
+```
+
+# 8. Train and Tune the Model
+```{r}
+
 ```
 
 
