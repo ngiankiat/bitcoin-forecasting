@@ -184,6 +184,7 @@ bitcoin_model <- bitcoin_model %>%
 * The data is extracted from Sprout Social which is a social media software company headquartered in Chicago.
 * It only has data of bitcoin related tweets starting Dec 2013.
 * The purpose of using this data is to see if the volume of the tweets (capturing media attention) affects the prices of bitcoin.
+* A study showed that the number of tweets on Twitter can influence BTC trading volume for the following day which can affect price fluctuations and number of transaction of cryptocurrencies. [Shen D, Urquhart A, Wang P (2019) Does twitter predict Bitcoin? Econ Lett 174:118–122]
 
 ```{r}
 twitter_volume <- read.csv("twitter_volume.csv")
@@ -196,13 +197,9 @@ bitcoin_model$tweets_volume[is.na(bitcoin_model$tweets_volume)] <- 0 # Replace t
 ```
 
 ```{r}
-plot1 <- ggplot(bitcoin_model, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) + 
-  scale_colour_manual(values = c("darkred"))
-plot2 <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = tweets_volume, colour = "Twitter Volume")) +
-  scale_colour_manual(values = c("steelblue"))
-
-grid.newpage()
-grid.draw(rbind(ggplotGrob(plot1), ggplotGrob(plot2), size = "last"))
+ggplot(bitcoin_model)  + 
+  geom_bar(aes(x=date, y=tweets_volume),stat="identity", fill="tan1", colour="sienna3")+
+  geom_line(aes(x=date, y=close*50),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./50, name = "bitcoin_price"))
 
 ```
 
@@ -547,6 +544,8 @@ bitcoin_model <- bitcoin_model %>% fill(sp500, .direction = "down")
 ### **Gold Price**
 
 XAU/USD
+
+* A special report by Bloomberg last month notes that the correlation between the virtual currency and gold was at an all-time high and BTC was maturing from a risk-on speculative asset to a gold-like store of value.
 
 ```{r}
 xau_usd_historical <- read.csv("xau_usd_historical.csv")
