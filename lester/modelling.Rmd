@@ -1,6 +1,5 @@
 ---
-title: "Bitcoin Momentum Feature Based Forecasting"
-author: "Nico"
+title: "Modelling with TidyModels"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -14,8 +13,8 @@ output:
 editor_options:
   chunk_output_type: console
 ---
-# 1. Load Packages
 
+# 1. Load Packages
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(
   collapse = FALSE,
@@ -34,52 +33,64 @@ library(tidymodels) # Building machine learning workflows and models
 library(Quandl) # Library for scraping Bitcoin data
 ```
 
-# Extracting Data/Adding features
+```{r}
+# Set dates for this project
+sDate = "2013-01-01"
+eDate = "2020-11-26"
+```
+
+
+# 2. Extracting Data/Adding features
 # 2.1 Getting Bitcoin Prices
 ```{r}
-Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
+# Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
+# # Get bitcoin price in YMD
+# bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD", start_date=sDate, end_date=eDate) %>%
+#   arrange(Date) %>%
+#   as_tibble()
+# colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
+# write_csv(bitcoin_price, 'data/bitcoin_prices.csv')
 
-bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD") %>%
-  arrange(Date) %>%
-  as_tibble()
-
-colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
+bitcoin_prices <- read_csv("data/bitcoin_prices.csv")
 ```
 
 # 2.2 Getting Bitcoin Indicators
 ```{r}
-quandl_tidy <- function(code, name) { 
-  df <- Quandl(code) %>% 
-    mutate(code = code, name = name) %>% 
-    rename(date = Date, value = Value) %>% 
-    arrange(date) %>% 
-    as_tibble()
-  return(df)
-}
+# quandl_tidy <- function(code, name, start_date, end_date) { 
+#   df <- Quandl(code, start_date = start_date, end_date = end_date) %>% 
+#     mutate(code = code, name = name) %>% 
+#     rename(date = Date, value = Value) %>% 
+#     arrange(date) %>% 
+#     as_tibble()
+#   return(df)
+# }
+# 
+# code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
+#                   c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
+#                   c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
+#                   c("BCHAIN/AVBLS", "Bitcoin Average Block Size"), 
+#                   c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"), 
+#                   c("BCHAIN/HRATE", "Bitcoin Hash Rate"), 
+#                   c("BCHAIN/MIREV", "Bitcoin Miners Revenue"))
+# 
+# bitcoin_data <- tibble()
+# 
+# # Query from Quandl and returns data in long format
+# for (i in seq_along(code_list)) { 
+#   print(str_c("Downloading data for ", code_list[[i]][1], "."))
+#   bitcoin_data <- bind_rows(bitcoin_data, 
+#                             quandl_tidy(code_list[[i]][1], code_list[[i]][2], sDate, eDate))
+# }
+# 
+# # Convert to wide format
+# bitcoin_data <- bitcoin_data %>%
+#   select(-name) %>%
+#   spread(code, value)
+# colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
+# 
+# write_csv(bitcoin_data, "data/bitcoin_indicators.csv")
 
-code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
-                  c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
-                  c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
-                  c("BCHAIN/AVBLS", "Bitcoin Average Block Size"), 
-                  c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"), 
-                  c("BCHAIN/HRATE", "Bitcoin Hash Rate"), 
-                  c("BCHAIN/MIREV", "Bitcoin Miners Revenue"))
-
-bitcoin_data <- tibble()
-
-# Query from Quandl and returns data in long format
-for (i in seq_along(code_list)) { 
-  print(str_c("Downloading data for ", code_list[[i]][1], "."))
-  bitcoin_data <- bind_rows(bitcoin_data, 
-                            quandl_tidy(code_list[[i]][1], code_list[[i]][2]))
-}
-
-# Convert to wide format
-bitcoin_data <- bitcoin_data %>%
-  select(-name) %>%
-  spread(code, value)
-colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
-
+bitcoin_data <- read_csv("data/bitcoin_indicators.csv")
 ```
 
 
