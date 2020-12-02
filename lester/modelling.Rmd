@@ -33,7 +33,8 @@ library(tidymodels) # Building machine learning workflows and models
 library(Quandl) # Download datasets
 library(tidyquant)  # Functions for collecting and analyzing financial data
 library(timetk)  # Functions to visualize, wrangle, and feature engineer time series data for forecasting and machine learning prediction
-library(xgboost)
+library(xgboost) # Machine learning algos
+library(vip) # For constructing variable importance plots
 ```
 
 ```{r}
@@ -221,31 +222,84 @@ best_params <- xgb_model_trained %>%
 ```{r}
 xgb_wflw_best <- xgb_wflw %>% 
   finalize_workflow(best_params)
+
+xgb_wflw_best
 ```
 
+# 10. Fitting final model to training data
+```{r}
+final_tree <- 
+  xgb_wflw_best %>%
+  fit(data = train)
+
+final_tree
+
+# Training set predictions
+final_tree_training_pred <- 
+  predict(final_tree, train) %>% 
+  # Add in predicted class probabilities
+  bind_cols(predict(final_tree, train, type = "prob")) %>% 
+  # Add the true outcome data back in
+  bind_cols(train %>% select(future_return_sign))
+
+# Get accuracy from predicting using training set
+final_tree_training_pred %>%
+  accuracy(truth = future_return_sign, .pred_class)
+
+```
+
+# 11. Extracting and Visualizing variable importance
+```{r}
+# Extract model object from final workflow. 
+# Visualise variable importance using vip()
+final_tree %>% 
+  pull_workflow_fit() %>% 
+  vip()
+```
+
+# 12. Fit Model with Resampling instead of training on the whole train set.
+```{r}
+# Used as an alternative to measuring the model's performance
+# 7 Folds from previously defined resamples
+xgb_resampling <- xgb_wflw_best %>%
+  fit_resamples(
+    resamples = resamples_cv,
+    control   = control_resamples(
+      verbose   = FALSE,  # Logging results as they are generated
+      save_pred = TRUE,   # Save the out-of-samples predictions for each model evaluated
+      allow_par = TRUE))  # Allow parallel processing
+
+# Return the average performance of the model based on training and testing different folds
+xgb_resampling %>% collect_metrics()
+
+```
+
+# 13. Fitting final model to testing data (Last Step)
+```{r}
+# Testing set predictions
+# Using the model that was trained with all the training data and fitting onto the never seen before test data
+final_tree_testing_pred <- 
+  predict(final_tree, test) %>% 
+  # Add in predicted class probabilities
+  bind_cols(predict(final_tree, test, type = "prob")) %>% 
+  # Add the true outcome data back in
+  bind_cols(test %>% select(future_return_sign))
+
+# Get accuracy from predicting using testing set
+final_tree_testing_pred %>%
+  accuracy(truth = future_return_sign, .pred_class)
+```
 
 
 # 9. Making Predictions (Bertram)
 ```{r}
-best_params <- xgb_model_trained %>%
-  select_best('mn_log_loss', maximise = FALSE)
-
-xgb_model_best <- xgb_model %>%
-  finalize_model(best_params)
-
-####
-
-xgb_wflw_best <- workflow() %>%
-  add_recipe(recipe_spec) %>%
-  add_model(xgb_model_best)
-
 resampling_results <- xgb_wflw_best %>%
   fit_resamples(
     resamples = resamples_cv,
     control   = control_resamples(
-      verbose   = FALSE, 
-      save_pred = TRUE,
-      allow_par = TRUE))
+      verbose   = FALSE,  # Logging results as they are generated
+      save_pred = TRUE,   # Save the out-of-samples predictions for each model evaluated
+      allow_par = TRUE))  # Allow parallel processing
 
 resample_predictions <- resampling_results %>%
   mutate(.testing = map(splits, testing)) %>%
