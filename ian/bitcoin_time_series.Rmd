@@ -154,7 +154,10 @@ bitcoin_price_train_tbl <-
 
 # 3. Time Series
 
-Source: [Tidy Forecasting with sweep](https://www.business-science.io/code-tools/2017/10/25/demo_week_sweep.html)
+Sources: 
+
+1. [Tidy Forecasting with sweep](https://www.business-science.io/code-tools/2017/10/25/demo_week_sweep.html)
+2. [Amazon Stock Price Forecasting Using Time Series Analysis](https://rpubs.com/kapage/523169)
 
 ## 3.1 Visualisation
 
@@ -189,7 +192,7 @@ Use the `auto.arima()` function from the `forecast` package to model the time se
 
 ```{r auto-arima}
 # Model using auto.arima
-fit_arima <- auto.arima(bitcoin_price_ts)
+fit_arima <- auto.arima(bitcoin_price_ts, lambda = "auto")
 
 fit_arima
 ```
@@ -255,8 +258,8 @@ fcast_tbl %>%
     geom_line(aes(x = date, y = price), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
     # geom_point(aes(x = date, y = price), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
     # Aesthetics
-    labs(title = "Bitcoin Prices Forecast: ARIMA", x = "", y = "Closing Price",
-         subtitle = "subtitle") +
+    labs(title = "Bitcoin Prices Forecast", x = "", y = "Closing Price",
+         subtitle = "ARIMA(0,1,0) with Drift") +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
     scale_y_continuous(labels = scales::dollar_format()) +
     scale_color_tq() +

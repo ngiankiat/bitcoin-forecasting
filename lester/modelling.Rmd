@@ -1,0 +1,312 @@
+---
+title: "Modelling with TidyModels"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: no
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+editor_options:
+  chunk_output_type: console
+---
+
+# 1. Load Packages
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE,
+  comment = "#",
+  message = FALSE,
+  warning = FALSE,
+  cache = FALSE,
+  fig.align = "center",
+  class.source = 'white'
+)
+```
+
+```{r}
+library(tidyverse)  # Data manipulation
+library(tidymodels) # Building machine learning workflows and models
+library(Quandl) # Download datasets
+library(tidyquant)  # Functions for collecting and analyzing financial data
+library(timetk)  # Functions to visualize, wrangle, and feature engineer time series data for forecasting and machine learning prediction
+library(xgboost) # Machine learning algos
+library(vip) # For constructing variable importance plots
+```
+
+```{r}
+# Set dates for this project. YMD Format.
+sDate = "2018-01-01"
+eDate = "2020-11-30"
+```
+
+
+# 2. Extracting Data/Adding features
+# 2.1 Getting Bitcoin Prices
+```{r}
+# Get Bitcoin prices from Quandl. YMD.
+# Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
+# bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD", start_date=sDate, end_date=eDate) %>%
+#   arrange(Date) %>%
+#   as_tibble()
+# colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
+# write_csv(bitcoin_price, 'data/bitcoin_price.csv')
+
+# Read Data
+bitcoin_price <- read_csv("data/bitcoin_price.csv")
+
+# Cleaning
+bitcoin_price[bitcoin_price == 0] <- NA
+bitcoin_price <- bitcoin_price %>%
+  map_df(na.locf)
+
+# Defining Target
+bitcoin_model <- bitcoin_price %>%
+  tq_mutate(select = close,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
+            col_rename = 'future_return') %>%
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)),
+         close = lag(close, 1),
+         date = date - days(1)) %>%
+  select(date, close, future_return, future_return_sign)
+bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
+```
+
+# 2.2 Getting Bitcoin Features
+```{r}
+# quandl_tidy <- function(code, name, start_date, end_date) {
+#   df <- Quandl(code, start_date = start_date, end_date = end_date) %>%
+#     mutate(code = code, name = name) %>%
+#     rename(date = Date, value = Value) %>%
+#     arrange(date) %>%
+#     as_tibble()
+#   return(df)
+# }
+# 
+# # Only shortlisted a few for simplicity. To add more.
+# code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"),
+#                   c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"),
+#                   c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"),
+#                   c("BCHAIN/AVBLS", "Bitcoin Average Block Size"),
+#                   c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"),
+#                   c("BCHAIN/HRATE", "Bitcoin Hash Rate"),
+#                   c("BCHAIN/MIREV", "Bitcoin Miners Revenue"))
+# 
+# bitcoin_data <- tibble()
+# 
+# # Query from Quandl and returns data in long format
+# for (i in seq_along(code_list)) {
+#   print(str_c("Downloading data for ", code_list[[i]][1], "."))
+#   bitcoin_data <- bind_rows(bitcoin_data,
+#                             quandl_tidy(code_list[[i]][1], code_list[[i]][2], sDate, eDate))
+# }
+# 
+# # Convert to wide format
+# bitcoin_data <- bitcoin_data %>%
+#   select(-name) %>%
+#   spread(code, value)
+# colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
+# 
+# write_csv(bitcoin_data, "data/bitcoin_indicators.csv")
+# 
+# bitcoin_data <- read_csv("data/bitcoin_indicators.csv")
+# bitcoin_data <- bitcoin_data[-nrow(bitcoin_data), ]  # Remove lastest date to match bitcoin prices and future returns
+```
+
+```{r}
+# Importing features from Marcus
+bitcoin_features <- read_csv("data/bitcoin_features.csv")
+bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove lastest date to match bitcoin prices and future returns
+```
+
+
+# 2.3 Merge all data into 1 tibble
+```{r}
+# Combine price data with features
+bitcoin_model <- bitcoin_model %>%
+  left_join(bitcoin_features, by="date")
+```
+
+
+# 3. Data Splitting and Resampling
+```{r}
+set.seed(123)
+
+train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2019-12-31")))
+test <- bitcoin_model %>% filter(between(date, as.Date("2020-01-01"), as.Date("2020-11-29")))
+```
+
+# 4. Create Recipe
+```{r}
+recipe_spec <- recipe(future_return_sign ~ ., data = train) %>% 
+  update_role(date, future_return, close, new_role = "ID") # Exclude these columns from the model. Only used for ID purpose
+
+```
+
+# 5. Define Model
+```{r}
+xgb_model <- boost_tree(learn_rate = 0.01,
+                        tree_depth = 1,
+                        min_n = 1,
+                        mtry = 500,
+                        trees = tune(),
+                        stop_iter = 50) %>%
+  set_engine('xgboost') %>%
+  set_mode('classification')
+
+xgb_model
+```
+
+# 6. Create Workflow
+```{r}
+xgb_wflw <- workflow() %>%
+  add_recipe(recipe_spec) %>%
+  add_model(xgb_model)
+
+xgb_wflw
+```
+
+# 7. Create grid for tuning. Train and Tune Model.
+```{r}
+# Create grid. Create 10 models.
+xgb_params <- grid_max_entropy(trees(), size = 10)
+
+# Cross Validation Folds for Tuning. Produces 7 folds.
+resamples_cv <- recipe_spec %>%
+  prep() %>%
+  juice() %>%
+  time_series_cv(
+    date_var = date,
+    initial = '3 month',
+    assess = '3 month',
+    skip = '3 month',
+    cumulative = TRUE
+  )
+
+```
+
+# 8. Model Tuning with a Grid
+```{r}
+# Fit models at all different values chosen for each hyperparameter
+# 7 Folds. Results reported for each row.
+xgb_model_trained <- xgb_wflw %>% tune_grid(
+  grid = xgb_params,
+  metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
+  resamples = resamples_cv,
+  control = control_resamples(verbose = FALSE,
+                              save_pred = TRUE,
+                              allow_par = TRUE))
+# Display results in a tidy tibble
+# Each model would be ran using the cross-fold validation. Average performance statstics reported back.
+# Note that the cross-fold validation models are not kept. Only using cross-fold validation to calculate performance statistics for us to choose which model parameters to use.
+# no. of models x no. of metrics
+xgb_model_results <- xgb_model_trained %>% 
+  collect_metrics()
+
+# Show the top 5 candidate models
+xgb_model_trained %>% 
+  show_best("mn_log_loss")
+
+# Save the best model parameters based on mn_log_loss metric
+best_params <- xgb_model_trained %>%
+  select_best('mn_log_loss', maximise = FALSE)
+```
+
+
+# 9. Finalize Model with the best model parameters
+```{r}
+xgb_wflw_best <- xgb_wflw %>% 
+  finalize_workflow(best_params)
+
+xgb_wflw_best
+```
+
+# 10. Fitting final model to training data
+```{r}
+final_tree <- 
+  xgb_wflw_best %>%
+  fit(data = train)
+
+final_tree
+
+# Training set predictions
+final_tree_training_pred <- 
+  predict(final_tree, train) %>% 
+  # Add in predicted class probabilities
+  bind_cols(predict(final_tree, train, type = "prob")) %>% 
+  # Add the true outcome data back in
+  bind_cols(train %>% select(future_return_sign))
+
+# Get accuracy from predicting using training set
+final_tree_training_pred %>%
+  accuracy(truth = future_return_sign, .pred_class)
+
+```
+
+# 11. Extracting and Visualizing variable importance
+```{r}
+# Extract model object from final workflow. 
+# Visualise variable importance using vip()
+final_tree %>% 
+  pull_workflow_fit() %>% 
+  vip()
+```
+
+# 12. Fit Model with Resampling instead of training on the whole train set.
+```{r}
+# Used as an alternative to measuring the model's performance
+# 7 Folds from previously defined resamples
+xgb_resampling <- xgb_wflw_best %>%
+  fit_resamples(
+    resamples = resamples_cv,
+    control   = control_resamples(
+      verbose   = FALSE,  # Logging results as they are generated
+      save_pred = TRUE,   # Save the out-of-samples predictions for each model evaluated
+      allow_par = TRUE))  # Allow parallel processing
+
+# Return the average performance of the model based on training and testing different folds
+xgb_resampling %>% collect_metrics()
+
+```
+
+# 13. Fitting final model to testing data (Last Step)
+```{r}
+# Testing set predictions
+# Using the model that was trained with all the training data and fitting onto the never seen before test data
+final_tree_testing_pred <- 
+  predict(final_tree, test) %>% 
+  # Add in predicted class probabilities
+  bind_cols(predict(final_tree, test, type = "prob")) %>% 
+  # Add the true outcome data back in
+  bind_cols(test %>% select(future_return_sign))
+
+# Get accuracy from predicting using testing set
+final_tree_testing_pred %>%
+  accuracy(truth = future_return_sign, .pred_class)
+```
+
+
+# 9. Making Predictions (Bertram)
+```{r}
+
+resample_predictions <- xgb_resampling %>%
+  mutate(.testing = map(splits, testing)) %>%
+  select(id, .predictions, .testing) %>%
+  unnest(c(.predictions, .testing), names_repair = "universal")
+
+signal <- resample_predictions %>%
+  select(- c(future_return_sign...208, .pred_0)) %>%
+  rename(future_return_pred = .pred_1,
+         future_return_sign = future_return_sign...6) %>%
+  arrange(date) %>%
+  mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
+         trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
+         return_buyhold = cumprod(1 + close_change_1d),
+         return_model = cumprod(1 + close_change_1d * signal - trading_cost))
+```
+
