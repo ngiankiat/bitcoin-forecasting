@@ -77,6 +77,8 @@ bitcoin_model <- bitcoin_price %>%
          date = date - days(1)) %>%
   select(date, close, future_return, future_return_sign)
 bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
+
+rmarkdown::paged_table(bitcoin_model %>% head())
 ```
 
 ## 2.2 Getting Bitcoin Features
@@ -124,6 +126,8 @@ bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
 # Importing features from Marcus
 bitcoin_features <- read_csv("data/bitcoin_features.csv")
 bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove lastest date to match bitcoin prices and future returns
+
+rmarkdown::paged_table(bitcoin_features %>% head())
 ```
 
 
@@ -132,6 +136,8 @@ bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove lastes
 # Combine price data with features
 bitcoin_model <- bitcoin_model %>%
   left_join(bitcoin_features, by="date")
+
+rmarkdown::paged_table(bitcoin_model %>% head())
 ```
 
 
@@ -173,7 +179,6 @@ resamples_cv %>%
         .line_alpha = 0.5,
         .interactive = FALSE
     )
-
 ```
 
 # 6. Define Model
