@@ -137,8 +137,8 @@ bitcoin_model <- bitcoin_model[-1, ]
 * A study showed that the number of tweets on Twitter can influence BTC trading volume for the following day which can affect price fluctuations and number of transaction of cryptocurrencies. [Shen D, Urquhart A, Wang P (2019) Does twitter predict Bitcoin? Econ Lett 174:118–122]
 
 ```{r}
-twitter_volume <- read.csv("twitter_volume.csv")
-twitter_volume$ï..date <- as.Date(twitter_volume$ï..date)
+# load the csv first
+twitter_volume$date <- as.Date(twitter_volume$date)
 colnames(twitter_volume) <- c("date", "tweets_volume")
 bitcoin_model <- bitcoin_model %>% left_join(twitter_volume)
 
@@ -444,7 +444,7 @@ bitcoin_model <- bitcoin_model %>% left_join(atr)
 * The data was downloaded from <a href="https://fred.stlouisfed.org/series/EFFR" target="_blank">this site</a>
   
 ```{r}
-fedfundsrate <- read.csv("fedfundsrate.csv")
+# load the csv first
 fedfundsrate$DATE <- as.Date(fedfundsrate$DATE)
 fedfundsrate <- subset(fedfundsrate, DATE>=as.Date("2011-09-13"))
 colnames(fedfundsrate) <- c("date", "effr")
@@ -460,7 +460,7 @@ bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
 
 ```
 
-### **S&P500 Closing Price**
+### **S&P500**
 ```{r}
 get_yahoo <- function(ticker) {
   
@@ -477,7 +477,7 @@ get_yahoo <- function(ticker) {
 }
 
 sp500 <- get_yahoo('^GSPC') %>%
-  select(date, sp500 = close)
+  select(date, sp500 = adjusted_close)
 bitcoin_model <- bitcoin_model %>% left_join(sp500)
 # fill na downwards for weekend missing values - fill with fri closing price
 bitcoin_model <- bitcoin_model %>% fill(sp500, .direction = "down")
@@ -491,9 +491,9 @@ XAU/USD
 * A special report by Bloomberg last month notes that the correlation between the virtual currency and gold was at an all-time high and BTC was maturing from a risk-on speculative asset to a gold-like store of value.
 
 ```{r}
-xau_usd_historical <- read.csv("xau_usd_historical.csv")
-xau_usd_historical$ï..Date <- as.Date(xau_usd_historical$ï..Date, format="%B %d, %Y")
-xau_usd_df <- select(xau_usd_historical,c(ï..Date,Price))
+# load the csv first
+xau_usd_historical$Date <- as.Date(xau_usd_historical$Date, format="%B %d, %Y")
+xau_usd_df <- select(xau_usd_historical,c(Date,Price))
 colnames(xau_usd_df) <- c("date","gold_price")
 
 ```
@@ -513,9 +513,8 @@ https://www.financialresearch.gov/financial-stress-index/
 * The OFR FSI incorporates five categories of indicators: credit, equity valuation, funding, safe assets and volatility. The FSI shows stress contributions by three regions: United States, other advanced economies, and emerging markets. The value of the OFR FSI on a given day is the weighted average level of each variable observed in the market on that day, relative to its history. The index is zero when this average is zero, suggesting that stress is at normal levels. The index is calculated after each U.S. trading day.
 
 ```{r}
-# use the FSI data from the csv
-fsi <- read.csv("fsi.csv")
-fsi_df <- fsi %>% select(date="Date", ofr_fsi = "OFR.FSI")
+# load the csv first
+fsi_df <- fsi %>% select(date="Date", ofr_fsi = "OFR FSI")
 fsi_df$date <- as.Date(fsi_df$date)
                              
 bitcoin_model <- bitcoin_model %>% left_join(fsi_df)
@@ -557,7 +556,7 @@ bitcoin_model$aaii_bearish_sentiment[is.na(bitcoin_model$aaii_bearish_sentiment)
 
 ```{r}
 cny_usd <- get_yahoo('USDCNY=X') %>%
-  select(date, cny_usd_close = close)
+  select(date, cny_usd_close = adjusted_close)
 bitcoin_model <- bitcoin_model %>% left_join(cny_usd)
 
 # fill na downwards for weekend missing values - fill with fri closing price
@@ -652,6 +651,19 @@ bitcoin_model <- bitcoin_model %>%
 
 ```
 
+### **US Dollar Index Price**
+* Data on yahoo is a bit weird, so took from alternative site (downloaded as csv)
+```{r}
+# load in the data first
+us_dollar_index_historical_data$Date <- as.Date(us_dollar_index_historical_data$Date, format="%B %d, %Y" )
+us_dollar_index <- select(us_dollar_index_historical_data, c(Date,Price))
+colnames(us_dollar_index) <- c("date","dollar_index_close")
+
+bitcoin_model <- bitcoin_model %>% left_join(us_dollar_index)
+bitcoin_model <- bitcoin_model %>% fill(dollar_index_close, .direction = "down")
+
+```
+
 
 ### Adjusting missing values for some features
 
@@ -671,6 +683,7 @@ This have an alternative site that we can take the data from:
 bitcoin_model <- select(bitcoin_model, -c(bchain.bcddc,bchain.bcdde,bchain.bcddm,bchain.bcddw,bchain.bcddy,bchain.atrct))
 
 # bchain.atrct - Bitcoin Median Transaction Confirmation Time
+# load in the data first
 median_confirmation_time_bitcoin$date <- as.Date(median_confirmation_time_bitcoin$date, format="%d/%m/%Y" )
 colnames(median_confirmation_time_bitcoin) <- c("date", "bchain.atrct")
 bitcoin_model <- bitcoin_model %>% left_join(median_confirmation_time_bitcoin)
@@ -881,7 +894,6 @@ ggplot(bitcoin_model)  +
 ```
 
 
-* US Dollar Index
 * Number of cryptocurrency in market
 
 
