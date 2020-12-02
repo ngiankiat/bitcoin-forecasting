@@ -293,15 +293,8 @@ final_tree_testing_pred %>%
 
 # 9. Making Predictions (Bertram)
 ```{r}
-resampling_results <- xgb_wflw_best %>%
-  fit_resamples(
-    resamples = resamples_cv,
-    control   = control_resamples(
-      verbose   = FALSE,  # Logging results as they are generated
-      save_pred = TRUE,   # Save the out-of-samples predictions for each model evaluated
-      allow_par = TRUE))  # Allow parallel processing
 
-resample_predictions <- resampling_results %>%
+resample_predictions <- xgb_resampling %>%
   mutate(.testing = map(splits, testing)) %>%
   select(id, .predictions, .testing) %>%
   unnest(c(.predictions, .testing), names_repair = "universal")
