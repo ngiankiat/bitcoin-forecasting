@@ -1,0 +1,324 @@
+---
+title: "BitCoin"
+author: "Tan Qing Lin"
+date: "December 1, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(gtrendsR)
+library(Quandl)
+library(quantmod)
+library(RcppRoll)
+library(lubridate)
+library(tidyquant)
+library(tidymodels)
+library(tsfeatures)
+library(slider)
+library(timetk)
+library(data.table)
+library(RedditExtractoR)
+```
+
+# 1. Scrape Bitcoin Data
+
+## 1.1 Quandl Functions
+
+The quandl_tidy function is a wrapper around the Quandl function that returns a cleaner tibble.
+
+```{r}
+Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
+
+quandl_tidy <- function(code, name) { 
+  df <- Quandl(code) %>% 
+    mutate(code = code, name = name) %>% 
+    rename(date = Date, value = Value) %>% 
+    arrange(date) %>% 
+    as_tibble()
+  return(df)
+}
+```
+
+## 1.2 Bitcoin Exchange Rate Data
+
+```{r}
+bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD") %>%
+  arrange(Date) %>%
+  as_tibble()
+
+colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
+```
+
+## 1.3 Bitcoin Indicators
+
+Data about bitcoin activity, transaction fees and mining.
+
+```{r}
+code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
+                  c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
+                  c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
+                  c("BCHAIN/ETRAV", "Bitcoin Estimated Transaction Volume BTC"), 
+                  c("BCHAIN/ETRVU", "Bitcoin Estimated Transaction Volume USD"), 
+                  c("BCHAIN/TRVOU", "Bitcoin USD Exchange Trade Volume"), 
+                  c("BCHAIN/NTRAN", "Bitcoin Number of Transactions"), 
+                  c("BCHAIN/NTRAT", "Bitcoin Total Number of Transactions"), 
+                  c("BCHAIN/NTREP", "Bitcoin Number of Transactions Excluding Popular Addresses"), 
+                  c("BCHAIN/NTRBL", "Bitcoin Number of Tansaction per Block"), 
+                  c("BCHAIN/ATRCT", "Bitcoin Median Transaction Confirmation Time"), 
+                  c("BCHAIN/TRFEE", "Bitcoin Total Transaction Fees"), 
+                  c("BCHAIN/TRFUS", "Bitcoin Total Transaction Fees USD"), 
+                  c("BCHAIN/CPTRA", "Bitcoin Cost Per Transaction"), 
+                  c("BCHAIN/CPTRV", "Bitcoin Cost % of Transaction Volume"), 
+                  c("BCHAIN/BLCHS", "Bitcoin api.blockchain Size"), 
+                  c("BCHAIN/AVBLS", "Bitcoin Average Block Size"), 
+                  c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"), 
+                  c("BCHAIN/HRATE", "Bitcoin Hash Rate"), 
+                  c("BCHAIN/MIREV", "Bitcoin Miners Revenue"), 
+                  c("BCHAIN/BCDDE", "Bitcoin Days Destroyed"), 
+                  c("BCHAIN/BCDDW", "Bitcoin Days Destroyed Minimum Age 1 Week"), 
+                  c("BCHAIN/BCDDM", "Bitcoin Days Destroyed Minimum Age 1 Month"), 
+                  c("BCHAIN/BCDDY", "Bitcoin Days Destroyed Minimum Age 1 Year") ,
+                  c("BCHAIN/BCDDC", "Bitcoin Days Destroyed Cumulative"))
+
+bitcoin_data <- tibble()
+
+for (i in seq_along(code_list)) { 
+  
+  bitcoin_data <- bind_rows(bitcoin_data, 
+                            quandl_tidy(code_list[[i]][1], code_list[[i]][2]))
+  
+}
+
+bitcoin_data <- bitcoin_data %>%
+  select(-name) %>%
+  spread(code, value)
+
+colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
+```
+
+```{r, echo = FALSE}
+rm(code_list, i, quandl_tidy)
+```
+
+```{r}
+# Analyse when Bitcoin prices have been the most volatile
+volatile_days = bitcoin_price %>%
+  mutate(lag_weighted_price = lag(weighted_price),
+         percentage_change = (weighted_price - lag_weighted_price)/weighted_price) %>%
+  filter(weighted_price > 300) %>%
+  arrange(percentage_change) %>%
+  filter(row_number() %in% c(1:50)) %>%
+  mutate(nature = ifelse(percentage_change > 0, "growth", "fall"))
+
+# Plot volatility on timeline
+ggplot(volatile_days, aes(x=date, fill=nature)) + 
+  geom_histogram( binwidth = 10)
+```
+
+```{r}
+volatile_days %>%
+  select(date, weighted_price, percentage_change) %>%
+  arrange(percentage_change)
+
+volatile_days_date = volatile_days$date
+```
+
+# Experiment with Reddit Data Pipeline
+
+```{r}
+reddit_crypto <- reddit_urls(
+  search_terms   = "Cryptocurrency",
+  page_threshold = 10
+)
+
+reddit_bitcoin <- reddit_urls(
+  search_terms   = "Bitcoin",
+  page_threshold = 10
+)
+
+bitcoin_reddit %>% 
+  mutate(date = as.Date(date, "%d-%m-%y")) %>%
+  filter(date %in% volatile_days_date)
+```
+
+# News Data Pipeline
+
+```{r, include = FALSE}
+library(xml2)
+library(rvest)
+library(RSelenium)
+```
+
+```{r}
+# Create Dataframe
+crypto_news = matrix(nrow = 0, ncol = 5)
+colnames(crypto_news) = c("source", "scrape.time", "heading", "paragraph", "article.date")
+
+scrape_data = function(website, url, css_path) {
+  # Read URL
+  data = read_html(url)
+
+  # Scrape Headings
+  data.headings <- html_text(html_nodes(data, css_path[1])) %>%
+  str_replace_all( "\n", "") %>%
+  str_replace_all( "\t", "")
+
+  # Create Temp Matrix
+  temp_matrix = matrix(nrow = length(data.headings), ncol = 5)
+  temp_matrix[,1] = website
+  temp_matrix[,2] = as.character(Sys.time())
+  temp_matrix[,3] = data.headings
+
+  # Scrape paragraph and date if available
+  if(!is.na(css_path[2])){
+    data.para <- html_text(html_nodes(data, css_path[2])) %>%
+    str_replace_all( "\n", "") %>%
+    str_replace_all( "\t", "")
+
+    temp_matrix[,4] = data.para
+  }
+
+  if(!is.na(css_path[3])){
+    data.date <- html_text(html_nodes(data, css_path[3]))
+
+    temp_matrix[,5] = data.date
+  }
+
+  return(rbind(crypto_news, temp_matrix))
+}
+
+closeAllConnections()
+
+# Scrape from https://www.coindesk.com/
+url = "https://www.coindesk.com/"
+css_path = c(".heading a:nth-child(1)", NA, ".card-date")
+crypto_news = scrape_data("CoinDesk", url, css_path)
+
+# Scrape from https://markets.businessinsider.com/cryptocurrencies
+url = "https://markets.businessinsider.com/cryptocurrencies"
+css_path = c(".teaser-headline", ".link", NA)
+crypto_news = scrape_data("Market Insider", url, css_path)
+
+# Scrape from https://seekingalpha.com/market-news/crypto
+url = "https://seekingalpha.com/market-news/crypto"
+css_path = c(".title", NA, NA)
+crypto_news = scrape_data("Seeking Alpha", url, css_path)
+
+# Scrape from https://news.bitcoin.com/
+url = "https://news.bitcoin.com/"
+css_path = c(".story--small__title , .story--large__title , .story--medium__title", NA, ".story__footer span")
+crypto_news = scrape_data("Bitcoin", url, css_path)
+
+# Scrape investing.com/news/cryptocurrency-news/
+for(i in 1:5) {
+  url = paste0("https://www.investing.com/news/cryptocurrency-news/", i)
+  data <- read_html(url)
+
+  data.headings = data %>%
+    html_nodes( "#leftColumn .title") %>%
+    html_text()
+
+  data.paragraphs = data %>%
+    html_nodes( "#leftColumn p") %>%
+    html_text()
+
+  data.date = data %>%
+    html_nodes( "#leftColumn .date") %>%
+    html_text()
+
+  temp_matrix = matrix(nrow = length(data.headings), ncol = 5)
+  temp_matrix[,1] = "Investing"
+  temp_matrix[,2] = as.character(Sys.time())
+  temp_matrix[,3] = data.headings
+  temp_matrix[,4] = data.paragraphs
+  # temp_matrix[,5] = data.date # there are some advertisements that stops the date from tallying.
+
+  crypto_news = rbind(crypto_news, temp_matrix)
+
+  Sys.sleep(2)
+}
+
+closeAllConnections()
+
+# Print Results
+crypto_news = as.data.frame(crypto_news)
+crypto_news
+```
+
+# NLP Text Processing
+
+```{r}
+library(tidytext)
+```
+
+```{r}
+# Combine Title and Paragraph
+crypto_news$full.text = paste0(crypto_news$heading, " ", crypto_news$paragraph)
+
+# Tokenize Text
+crypto_news.token = crypto_news %>%
+  select(full.text) %>%
+  unnest_tokens(word, full.text) %>%
+  group_by(word) %>%
+  summarize(n_tokens = n()) %>%
+  arrange(desc(n_tokens))
+
+crypto_news.token
+```
+
+```{r}
+# Process Stopwords
+stopwords_sw_iso = stopwords::stopwords(language = 'en',source='stopwords-iso')
+
+# Exlude Some Stopwords
+excludefromstopwords <- c("high", "new", "up", "above", "back", "below", "big", "higher", "world", "down", "index", "interest", "billion", "early", "under", "changes", "highest", "lower", "lowest", "million", "states", "value", "microsoft", "website", "bottom", "best")
+stopwords_sw_iso <- stopwords_sw_iso[!stopwords_sw_iso %in% excludefromstopwords]
+
+# Include Some Stopwords
+extra_stop_words <- c("day", "investing.com", "2.0", "2020")
+
+# Include Some Stopwords
+stop_words = data.frame(word=unique(c(stopwords_sw_iso,extra_stop_words)),stringsAsFactors = F)
+stop_words = stop_words %>% mutate(stopword=1)
+
+# Process Stopwords
+crypto_news.token = crypto_news.token %>% 
+  left_join(y=stop_words, by= "word", match = "all") %>%
+  filter(is.na(stopword))
+
+crypto_news.token
+```
+
+```{r}
+# Tokenize Text
+crypto_news.bigrams =  crypto_news %>% 
+  select(full.text) %>%
+  unnest_tokens(bigram, token = "ngrams", n = 2, full.text)
+
+# Remove Bigrams Containing Stopwords
+crypto_news.bigrams = crypto_news.bigrams %>%
+  separate(bigram, c('word1', 'word2'), sep=" ") %>%
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word) %>%
+  unite(bigram, word1, word2, sep = ' ') %>%
+  group_by(bigram) %>%
+  summarize(n_tokens = n()) %>%
+  arrange(desc(n_tokens))
+
+crypto_news.bigrams
+```
+
+
+
+
+
+
+
+
+
+
