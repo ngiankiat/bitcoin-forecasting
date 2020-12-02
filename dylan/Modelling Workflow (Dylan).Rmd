@@ -29,7 +29,8 @@ library(tidyquant)  # Functions for collecting and analyzing financial data
 library(timetk)  # Functions to visualize, wrangle, and feature engineer time series data for forecasting and machine learning prediction
 library(xgboost) # Machine learning algos
 library(vip) # For constructing variable importance plots
-library(splitTools) #to create folds for time series data
+library(stacks) # to create stacks for ensembling
+library(caret) # for confusion matrix
 ```
 
 ```{r}
@@ -149,11 +150,24 @@ test <- bitcoin_model %>%
   filter(between(date, as.Date("2020-01-01"), as.Date("2020-11-29")))
 ```
 
+#4. Create Recipe and control settings
+```{r}
+# excluding columns not used for prediction
+# a general recipe for preprocessing train data
+train_rec <- recipe(future_return_sign ~ ., data=train) %>%
+  update_role(date, future_return, close, new_role="ID")
 
-# 4. Creating folds
+metric <- metric_set(rmse)
+
+# making control settings
+ctrl_grid <- control_stack_grid()
+ctrl_res <- control_stack_resamples()
+```
+
+# 5. Creating folds
 ```{r}
 # Cross Validation Folds for Tuning. Produces 7 folds.
-resamples_cv <- recipe_spec %>%
+resamples_cv <- train_rec %>%
   prep() %>%
   juice() %>% 
   time_series_cv(
@@ -173,14 +187,184 @@ resamples_cv %>%
         .line_alpha = 0.5,
         .interactive = FALSE,
     )
+```
 
+# 6. Creating the workflow for models
+
+## 6.1 xgboost model
+```{r}
+xgb_model <- boost_tree(learn_rate = 0.01,
+                        tree_depth = 1,
+                        min_n = 1,
+                        mtry = 500,
+                        trees = tune(),
+                        stop_iter = 50) %>%
+  set_engine('xgboost') %>%
+  set_mode('classification')
+
+xgb_model
+```
+
+```{r}
+# adding the model and the preprocessing into the xgboost workflow
+xgboost_wflow <- workflow() %>%
+  add_model(xgb_model) %>%
+  add_recipe(train_rec)
+```
+```{r}
+# fitting the model
+xgboost_results <- tune_grid(
+  xgboost_wflow,
+  resamples = resamples_cv,
+  grid=10,
+  control=ctrl_grid,
+  metrics = metric_set(accuracy, roc_auc, mn_log_loss)
+)
+
+xgboost_res
+```
+
+## 6.2 Logistic regression model
+Can also tune parameters but haven tried. penalty etc. tune first then put it in later and enemble only the best? or just put all inside the stack withnout choosing which tune is the best.
+
+Note: can play around with the different stuff like engine and modes.
+```{r}
+# lasso
+log_reg_spec <- logistic_reg() %>%
+  set_engine("glm") %>%   #should i change engine?
+  set_mode("classification")
+
+log_reg_wflow <- workflow() %>%
+  add_model(log_reg_spec) %>%
+  add_recipe(train_rec)
+
+# fitting the model
+log_reg_results <- fit_resamples(
+  log_reg_wflow,
+  resamples = resamples_cv,
+  control = ctrl_res,
+  metrics = metric_set(accuracy)
+)
+
+log_reg_results
+```
+
+## 6.3 Support vector machine
+Here we tune 2 different parameters. but end up only with 6 models. Might need to see how all different combinations can come together.
+```{r}
+# creating model specifications
+svm_spec <-
+  svm_rbf(
+    cost=tune(),
+    rbf_sigma=tune()
+  ) %>%
+  set_engine("kernlab") %>%
+  set_mode("classification")
+
+# Creating workflow
+svm_wflow <- workflow() %>%
+  add_model(svm_spec) %>%
+  add_recipe(train_rec)
+
+svm_results <- tune_grid(svm_wflow,
+                         resamples=resamples_cv,
+                         grid=6,
+                         control=ctrl_grid)
+
+svm_results$.predictions[[1]]
+#shows 6 different models of data
 ```
 
 
 
+# 7. stacking
+```{r}
+# initialising the stacks
+stacks()
+
+# add_cnadidates() adds ensemble members to the stack
+stacked_model <-
+  stacks() %>%
+  add_candidates(xgboost_res) %>%
+  #add_candidates(log_reg_results) %>%
+  #no idea why logistic couldn;t work. ask lester about engine etc.
+  add_candidates(svm_results)
+
+stacked_model
+```
+
+Showing the rsults of the different models
+```{r}
+as_tibble(stacked_model)
+```
+
+First column is the actual value and the remaining columns gives the predictions for each ensemble member. Now we need to evaluate how to combine predictions together by using `blend_predictions()`. This is espeically important as ensemble members are highly correlated. Therefore the `blend_predictions()` helps to perform regulaization to figure out how the stack mamebrs can be combined.
+
+```{r}
+stacked_model_blended <-
+  stacked_model %>%
+  blend_predictions()
+
+stacked_model_blended #2 models were chosen at the end
+```
+
+`blend_predictions` function determines how model output will be combined after fitting through a lasso model on the entire stack. Predicting the true assessment comes from using the predictions from each of the ensemble members. If stacking coefficients are non-zero, they will be included in the model.
+
+This shows the proprtions of the different models selected for the blended stack model.
+```{r}
+autoplot(stacked_model_blended, type = "weights")
+```
+
+We can use autoplot to see if got the right trade off.
+```{r}
+autoplot(stacked_model_blended)
+```
+
+Fitting the different members of the ensemble into the model.
+```{r}
+stacked_model_blended_model <- stacked_model_blended %>%
+  fit_members()
+```
+
+## 7.1 Seeing model configurations
+(maybe can remove this. no idea what it means)
+```{r}
+collect_parameters(stacked_model_blended,
+                   "svm_results")
+
+```
+
+
+# 9. Predicting with the test data
+```{r}
+test_predict <- test %>%
+  bind_cols(predict(stacked_model_blended_model, .))
+
+
+confusionMatrix(factor(test_predict$.pred_class),
+                factor(test_predict$future_return_sign))
+```
+
+# 9. Evaluating how the individual members performed individually
+problem: looks like SVM is carrying the entire model.
+suggestion: can just take the best of each type and throw into SVM instead of taking all possible tuning scenarios? or just use all tuning scenarios let the lasso regression choose?
+```{r}
+member_preds <-
+  test_predict %>%
+  select(future_return_sign) %>%
+  bind_cols(predict(stacked_model_blended_model, test_predict, members=TRUE))
+
+# Confusion matrix for each model
+confusionMatrix(factor(member_preds$.pred_class_xgboost_res_1_03),
+                factor(member_preds$future_return_sign))
+
+confusionMatrix(factor(member_preds$	
+.pred_class_svm_results_1_4),
+                factor(member_preds$future_return_sign))
+```
 
 # 4. Creating folds
-```{r}
+```(r)
 # splits into B_1,...,B_k+1 number of folds
 # "extending": 1st iteration B_1 against B_2
 # 2nd iteration: B_1+B_2 against B_3
@@ -199,193 +383,4 @@ folds <- create_timefolds(train$date,
 ```
 
 
-
-
-
-
-
-
-
-
-
-# 4. Create Recipe
-```{r}
-recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
-  update_role(date, future_return, close, new_role = "ID") # Exclude these columns from the model. Only used for ID purpose
-
-```
-
-# 5. Create resamples from cross validation folds of 3 months
-```{r}
-# Cross Validation Folds for Tuning. Produces 7 folds.
-resamples_cv <- recipe_spec %>%
-  prep() %>%
-  juice() %>% 
-  time_series_cv(
-    date_var = date,
-    initial = '3 month',  # No. of data points from original data that are in analysis (training set)
-    assess = '3 month',   # No. of data points from original data that are in assessment (testing set)
-    skip = '3 month',     # Increment of resampling data set on assessment set only.
-    cumulative = TRUE    # TRUE, Analysis set will grow as resampling continues. Assessment set size remains static
-  )
-
-# Plot resampling timeline for each fold
-resamples_cv %>% 
-  plot_time_series_cv_plan(
-        date, close, # date variable and value variable
-        # Additional arguments passed to plot_time_series(),
-        .facet_ncol = 2,
-        .line_alpha = 0.5,
-        .interactive = FALSE
-    )
-```
-
-# 6. Define Model
-```{r}
-xgb_model <- boost_tree(learn_rate = 0.01,
-                        tree_depth = 1,
-                        min_n = 1,
-                        mtry = 500,
-                        trees = tune(),
-                        stop_iter = 50) %>%
-  set_engine('xgboost') %>%
-  set_mode('classification')
-
-xgb_model
-```
-
-# 7. Create Workflow
-```{r}
-xgb_wflw <- workflow() %>%
-  add_recipe(recipe_spec) %>%
-  add_model(xgb_model)
-
-xgb_wflw
-```
-
-# 8. Create grid for tuning.
-```{r}
-# Create grid. Create 10 models.
-xgb_params <- grid_max_entropy(trees(), size = 10)
-xgb_params
-```
-
-# 9. Model Tuning with a Grid
-```{r}
-# Fit models at all different values chosen for each hyperparameter
-# 7 Folds. Results reported for each row.
-xgb_model_trained <- xgb_wflw %>% tune_grid(
-  grid = xgb_params,
-  metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
-  resamples = resamples_cv,
-  control = control_resamples(verbose = FALSE,
-                              save_pred = TRUE,
-                              allow_par = TRUE))
-# Display results in a tidy tibble
-# Each model would be ran using the cross-fold validation. Average performance statstics reported back.
-# Note that the cross-fold validation models are not kept. Only using cross-fold validation to calculate performance statistics for us to choose which model parameters to use.
-# no. of models x no. of metrics
-xgb_model_results <- xgb_model_trained %>% 
-  collect_metrics()
-
-# Show the top 5 candidate models
-xgb_model_trained %>% 
-  show_best("mn_log_loss")
-
-# Save the best model parameters based on mn_log_loss metric
-best_params <- xgb_model_trained %>%
-  select_best('mn_log_loss', maximise = FALSE)
-```
-
-# 10. Finalize workflow with the best model parameters
-```{r}
-xgb_wflw_best <- xgb_wflw %>% 
-  finalize_workflow(best_params)
-
-xgb_wflw_best
-```
-
-# 10. Fitting final model to training data
-```{r}
-xgb_final <- 
-  xgb_wflw_best %>%
-  fit(data = train)
-
-xgb_final
-
-# Training set predictions
-xgb_final_training_pred <- 
-  predict(xgb_final, train) %>% 
-  # Add in predicted class probabilities
-  bind_cols(predict(xgb_final, train, type = "prob")) %>% 
-  # Add the true outcome data back in
-  bind_cols(train %>% select(future_return_sign))
-
-# Get accuracy from predicting using training set
-xgb_final_training_pred %>%
-  accuracy(truth = future_return_sign, .pred_class)
-
-```
-
-# 11. Extracting and Visualizing variable importance
-```{r}
-# Extract model object from final workflow. 
-# Visualise variable importance using vip()
-xgb_final %>% 
-  pull_workflow_fit() %>% 
-  vip()
-```
-
-# 12. Fit Model with Resampling instead of training on the whole train set.
-```{r}
-# Used as an alternative to measuring the model's performance
-# 7 Folds from previously defined resamples
-xgb_resampling <- xgb_wflw_best %>%
-  fit_resamples(
-    resamples = resamples_cv,
-    control   = control_resamples(
-      verbose   = FALSE,  # Logging results as they are generated
-      save_pred = TRUE,   # Save the out-of-samples predictions for each model evaluated
-      allow_par = TRUE))  # Allow parallel processing
-
-# Return the average performance of the model based on training and testing different folds
-xgb_resampling %>% collect_metrics()
-
-```
-
-# 13. Fitting final model to testing data (Last Step)
-```{r}
-# Testing set predictions
-# Using the model that was trained with all the training data and fitting onto the never seen before test data
-xgb_final_testing_pred <- 
-  predict(xgb_final, test) %>% 
-  # Add in predicted class probabilities
-  bind_cols(predict(xgb_final, test, type = "prob")) %>% 
-  # Add the true outcome data back in
-  bind_cols(test %>% select(future_return_sign))
-
-# Get accuracy from predicting using testing set
-xgb_final_testing_pred %>%
-  accuracy(truth = future_return_sign, .pred_class)
-```
-
-
-# 14. Comparing returns to benchmark (Bertram)
-```{r}
-
-# resample_predictions <- xgb_resampling %>%
-#   mutate(.testing = map(splits, testing)) %>%
-#   select(id, .predictions, .testing) %>%
-#   unnest(c(.predictions, .testing), names_repair = "universal")
-# 
-# signal <- resample_predictions %>%
-#   select(- c(future_return_sign...208, .pred_0)) %>%
-#   rename(future_return_pred = .pred_1,
-#          future_return_sign = future_return_sign...6) %>%
-#   arrange(date) %>%
-#   mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
-#          trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
-#          return_buyhold = cumprod(1 + close_change_1d),
-#          return_model = cumprod(1 + close_change_1d * signal - trading_cost))
-```
 
