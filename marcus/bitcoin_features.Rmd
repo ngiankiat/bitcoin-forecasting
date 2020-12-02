@@ -565,6 +565,7 @@ bitcoin_model <- bitcoin_model %>% fill(cny_usd_close, .direction = "down")
 
 ```
 
+### **VIX**
 ```{r}
 vix <- get_yahoo('^VIX') %>%
   select(date, vix = adjusted_close)
@@ -573,12 +574,118 @@ bitcoin_model <- bitcoin_model %>% left_join(vix)
 bitcoin_model <- bitcoin_model %>% fill(vix, .direction = "down")
 ```
 
+### **Blockchain Indicators**
+```{r}
+bitcoin_data_df <- select(bitcoin_data, -c(nvt))
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_data_df)
+
+```
+
+### **Google Trends**
+```{r}
+# Scrape Google Data
+download_all <- FALSE
+if (download_all == TRUE) {
+  dates <- tibble(dates = ymd("2011-01-01") + months(0:120)) %>% filter(dates <= Sys.Date())
+} else {
+  dates <- tibble(dates = ymd("2017-01-01") + months(0:120)) %>% filter(dates <= Sys.Date())
+}
+
+google_trends <- function(query, begin_date, end_date) {
+  df <- gtrends(keyword = 'bitcoin',
+                time = str_c(begin_date, ' ', end_date))[['interest_over_time']] %>%
+    select(date, hits) %>%
+    mutate(date = as.Date(date)) %>%
+    as_tibble()
+  return(df)
+}
+
+```
+
+```{r, eval=FALSE}
+# Download Google Trends Daily Data
+for (i in 1:nrow(dates)) {
+  month <- dates[["dates"]][i]
+  begin_date <- as.Date(month)
+  end_date <- as.Date(month) + months(1) - days(1)
+  end_date <- as.Date(ifelse(end_date >= Sys.Date(), Sys.Date(), end_date))
+  print(str_c("Downloading Google Trends data from ", begin_date, " to ", end_date, "."))
+  
+  df <- google_trends("bitcoin", begin_date, end_date)
+  
+  write_csv(df, str_c("C:\\Users\\marcu\\Desktop\\NUS BBA3\\Y4.S1\\DBA4761\\Final Project\\Own Version\\google-trend-daily\\google-trends-daily-", begin_date, "-", end_date, ".csv"))
+}
+
+```
 
 ```{r}
-# BCHAIN/HRATE
-bitcoin_hr <- select(bitcoin_data, c(date,bchain.hrate))
-bitcoin_model <- bitcoin_model %>% left_join(bitcoin_hr)
+# Download Google Trends Monthly Data
+monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>% 
+  rename(hits_monthly = hits)
+
+# change those <1 to 1 as later the conversion to numeric will not have NA instead
+monthly$hits_monthly[monthly$hits_monthly=="<1"]<- "1"
 ```
+
+```{r}
+# Rebase
+bitcoin_google <- list.files('google-trend-daily') %>%
+  map_df(~ read_csv(file.path('google-trend-daily', str_c(.)), col_types = c('Di'))) %>%
+  rename(hits_daily = hits) %>%
+  left_join(monthly) %>%
+  fill(hits_monthly) %>%
+  mutate(hits_monthly = as.numeric(hits_monthly),
+         hits_daily = hits_daily * hits_monthly / 100)
+
+```
+
+```{r}
+bitcoin_model <- bitcoin_model %>% 
+  left_join(bitcoin_google)
+
+```
+
+### **Bitcoin Drawdown**
+```{r}
+bitcoin_model <- bitcoin_model %>%
+  mutate(close_drawdown = -1 * (1 - close / cummax(close)))
+
+```
+
+
+### Adjusting missing values for some features
+
+The following indicators does not have values since 2017, and there are no alternative sites that provide these data, so we will leave these out:
+
+* bchain.bcddc - Bitcoin Days Destroyed Cumulative
+* bchain.bcdde - Bitcoin Days Destroyed
+* bchain.bcddm - Bitcoin Days Destroyed Minimum Age 1 Month
+* bchain.bcddw - Bitcoin Days Destroyed Minimum Age 1 Week
+* bhcian.bcddy - Bitcoin Days Destroyed Minimum Age 1 Year
+
+This have an alternative site that we can take the data from: 
+
+* bchain.atrct - Bitcoin Median Transaction Confirmation Time
+
+```{r}
+bitcoin_model <- select(bitcoin_model, -c(bchain.bcddc,bchain.bcdde,bchain.bcddm,bchain.bcddw,bchain.bcddy,bchain.atrct))
+
+# bchain.atrct - Bitcoin Median Transaction Confirmation Time
+median_confirmation_time_bitcoin$date <- as.Date(median_confirmation_time_bitcoin$date, format="%d/%m/%Y" )
+colnames(median_confirmation_time_bitcoin) <- c("date", "bchain.atrct")
+bitcoin_model <- bitcoin_model %>% left_join(median_confirmation_time_bitcoin)
+
+
+# missing one value for bchain.naddu - Bitcoin Number of Unique Addresses Used: 23 May 2020
+## number obtained from blockchain website: 588174
+bitcoin_model[bitcoin_model$date=="2020-05-23", "bchain.naddu"] <- 588174
+
+# hits daily and monthly 30 Nov 2020 missing, currently fill with previous day
+bitcoin_model <- bitcoin_model %>% fill(hits_daily,.direction = "down")
+bitcoin_model <- bitcoin_model %>% fill(hits_monthly,.direction = "down")
+
+```
+
 
 Using data from 2013 Oct onwards
 ```{r}
@@ -589,7 +696,7 @@ bitcoin_features <- select(bitcoin_model, -c(close,future_return,future_return_s
 
 ```{r}
 rmarkdown::paged_table(bitcoin_features)
-skim(bitcoin_features)
+skim(bitcoin_model)
 ```
 
 ```{r}
@@ -774,10 +881,8 @@ ggplot(bitcoin_model)  +
 ```
 
 
-
-
-
-
+* US Dollar Index
+* Number of cryptocurrency in market
 
 
 
