@@ -142,12 +142,14 @@ Split the data into training and testing data to test accuracy of forecasts. For
 
 ```{r train test split}
 # Keep last 365 days as test data
-bitcoin_price_test_tbl <- tail(bitcoin_price_tbl, n = 365)
+bitcoin_price_test_tbl <- 
+  bitcoin_price_tbl %>%
+  filter(date >= "2020-01-01" & date <= "2020-11-30")
 
 # Remove test data rows from original dataset
 bitcoin_price_train_tbl <- 
-  bitcoin_price_tbl %>% 
-  filter(row_number() <= n()-365)
+  bitcoin_price_tbl %>%
+  filter(date >= "2018-01-01" & date <= "2019-12-31")
 ```
 
 
@@ -168,11 +170,11 @@ We begin by visualising the daily closing prices for Bitcoin over the time perio
 bitcoin_price_train_tbl %>%
     ggplot(aes(date, price)) +
     geom_line(col = palette_light()[6]) +
-    geom_ma(ma_fun = SMA, n = 365, size = 1, col = palette_light()[2]) +
+    geom_ma(ma_fun = SMA, n = 30, size = 1, col = palette_light()[2]) +
     theme_tq() +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
-    scale_y_continuous(labels = scales::dollar_format())
-    labs(title = "Bitcoin Prices: Sep 2011 through Nov 2019")
+    scale_y_continuous(labels = scales::dollar_format()) +
+    labs(title = "Bitcoin Prices: Jan 2018 through Dec 2020")
 ```
 
 ## 3.2 ARIMA Forecasting
@@ -181,7 +183,7 @@ Convert Bitcoin daily closing price data from `tbl` to a `ts` object.
 
 ```{r convert from tbl to ts}
 # Convert from tbl to ts
-bitcoin_price_ts <- tk_ts(bitcoin_price_train_tbl, start = bitcoin_price_tbl$date[1], freq = 365)
+bitcoin_price_ts <- tk_ts(bitcoin_price_train_tbl, start = bitcoin_price_train_tbl$date[1], freq = 365)
 
 # Check that ts-object has a timetk index
 # This will be important when using sw_sweep() later
@@ -228,7 +230,7 @@ Use the `forecast()` function to forecast Bitcoin prices for the next month.
 
 ```{r construct forecast table}
 # Forecast next 30 days
-fcast_arima <- forecast(fit_arima, h = 365)
+fcast_arima <- forecast(fit_arima, h = 335)
 
 # Check if forecast has timetk index
 has_timetk_idx(fcast_arima)
@@ -259,7 +261,7 @@ fcast_tbl %>%
     # geom_point(aes(x = date, y = price), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
     # Aesthetics
     labs(title = "Bitcoin Prices Forecast", x = "", y = "Closing Price",
-         subtitle = "ARIMA(0,1,0) with Drift") +
+         subtitle = "ARIMA(1,1,1) without Drift") +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
     scale_y_continuous(labels = scales::dollar_format()) +
     scale_color_tq() +
@@ -290,5 +292,62 @@ mape <- mean(abs(test_error_pct), na.rm=TRUE)
 mpe  <- mean(test_error_pct, na.rm=TRUE)
 
 tibble(me, rmse, mae, mape, mpe) %>% glimpse()
+```
+
+
+# 4. Time Series with Modeltime
+
+```{r modeltime}
+library(tidymodels)
+library(modeltime)
+library(lubridate)
+
+# Model 1: auto_arima
+model_fit_arima_no_boost <- arima_reg() %>%
+    set_engine(engine = "auto_arima") %>%
+    fit(price ~ date, data = bitcoin_price_train_tbl)
+
+# Model 2: arima_boost
+model_fit_arima_boosted <- arima_boost(
+    min_n = 2,
+    learn_rate = 0.015
+) %>%
+    set_engine(engine = "auto_arima_xgboost") %>%
+    fit(price ~ date + as.numeric(date) + factor(day(date), ordered = F),
+        data =  bitcoin_price_train_tbl)
+
+# Model 3: error-trend-season (ets)
+model_fit_ets <- exp_smoothing() %>%
+    set_engine(engine = "ets") %>%
+    fit(price ~ date, data = bitcoin_price_train_tbl)
+
+# Model 4: prophet
+model_fit_prophet <- prophet_reg() %>%
+    set_engine(engine = "prophet") %>%
+    fit(price ~ date, data = bitcoin_price_train_tbl)
+
+# Add fitted models to a Modeltime Table
+models_tbl <- modeltime_table(
+    model_fit_arima_no_boost,
+    model_fit_arima_boosted,
+    model_fit_ets,
+    model_fit_prophet
+)
+
+# Calibrate the model to test data
+calibration_tbl <- models_tbl %>%
+    modeltime_calibrate(new_data = bitcoin_price_test_tbl)
+
+# Visualise forecasted values for all models
+calibration_tbl %>%
+    modeltime_forecast(
+        new_data    = bitcoin_price_test_tbl,
+        actual_data = rbind(bitcoin_price_train_tbl,
+                            bitcoin_price_test_tbl)
+    ) %>%
+    plot_modeltime_forecast(
+      .legend_max_width = 25, # For mobile screens
+      .interactive      = TRUE
+    )
 ```
 
