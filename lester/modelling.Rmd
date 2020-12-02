@@ -25,6 +25,8 @@ knitr::opts_chunk$set(
   fig.align = "center",
   class.source = 'white'
 )
+
+# Set knit directory to project directory
 ```
 
 ```{r}
@@ -294,19 +296,19 @@ final_tree_testing_pred %>%
 # 9. Making Predictions (Bertram)
 ```{r}
 
-resample_predictions <- xgb_resampling %>%
-  mutate(.testing = map(splits, testing)) %>%
-  select(id, .predictions, .testing) %>%
-  unnest(c(.predictions, .testing), names_repair = "universal")
-
-signal <- resample_predictions %>%
-  select(- c(future_return_sign...208, .pred_0)) %>%
-  rename(future_return_pred = .pred_1,
-         future_return_sign = future_return_sign...6) %>%
-  arrange(date) %>%
-  mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
-         trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
-         return_buyhold = cumprod(1 + close_change_1d),
-         return_model = cumprod(1 + close_change_1d * signal - trading_cost))
+# resample_predictions <- xgb_resampling %>%
+#   mutate(.testing = map(splits, testing)) %>%
+#   select(id, .predictions, .testing) %>%
+#   unnest(c(.predictions, .testing), names_repair = "universal")
+# 
+# signal <- resample_predictions %>%
+#   select(- c(future_return_sign...208, .pred_0)) %>%
+#   rename(future_return_pred = .pred_1,
+#          future_return_sign = future_return_sign...6) %>%
+#   arrange(date) %>%
+#   mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
+#          trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
+#          return_buyhold = cumprod(1 + close_change_1d),
+#          return_model = cumprod(1 + close_change_1d * signal - trading_cost))
 ```
 
