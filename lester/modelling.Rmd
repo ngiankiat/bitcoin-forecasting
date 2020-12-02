@@ -32,6 +32,8 @@ library(tidyverse)  # Data manipulation
 library(tidymodels) # Building machine learning workflows and models
 library(Quandl) # Download datasets
 library(tidyquant)  # Functions for collecting and analyzing financial data
+library(timetk)  # Functions to visualize, wrangle, and feature engineer time series data for forecasting and machine learning prediction
+library(xgboost)
 ```
 
 ```{r}
@@ -134,32 +136,130 @@ bitcoin_model <- bitcoin_model %>%
 ```{r}
 set.seed(123)
 
-splits <- initial_split(hotels, strata = children)
+train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2019-12-31")))
+test <- bitcoin_model %>% filter(between(date, as.Date("2020-01-01"), as.Date("2020-11-29")))
 ```
 
 # 4. Create Recipe
 ```{r}
+recipe_spec <- recipe(future_return_sign ~ ., data = train) %>% 
+  update_role(date, future_return, close, new_role = "ID") # Exclude these columns from the model. Only used for ID purpose
 
 ```
 
 # 5. Define Model
 ```{r}
+xgb_model <- boost_tree(learn_rate = 0.01,
+                        tree_depth = 1,
+                        min_n = 1,
+                        mtry = 500,
+                        trees = tune(),
+                        stop_iter = 50) %>%
+  set_engine('xgboost') %>%
+  set_mode('classification')
 
+xgb_model
 ```
 
 # 6. Create Workflow
 ```{r}
+xgb_wflw <- workflow() %>%
+  add_recipe(recipe_spec) %>%
+  add_model(xgb_model)
 
+xgb_wflw
 ```
 
-# 7. Create grid for tuning
+# 7. Create grid for tuning. Train and Tune Model.
 ```{r}
+# Create grid. Create 10 models.
+xgb_params <- grid_max_entropy(trees(), size = 10)
+
+# Cross Validation Folds for Tuning. Produces 7 folds.
+resamples_cv <- recipe_spec %>%
+  prep() %>%
+  juice() %>%
+  time_series_cv(
+    date_var = date,
+    initial = '3 month',
+    assess = '3 month',
+    skip = '3 month',
+    cumulative = TRUE
+  )
 
 ```
 
-# 8. Train and Tune the Model
+# 8. Model Tuning with a Grid
 ```{r}
+# Fit models at all different values chosen for each hyperparameter
+# 7 Folds. Results reported for each row.
+xgb_model_trained <- xgb_wflw %>% tune_grid(
+  grid = xgb_params,
+  metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
+  resamples = resamples_cv,
+  control = control_resamples(verbose = FALSE,
+                              save_pred = TRUE,
+                              allow_par = TRUE))
+# Display results in a tidy tibble
+# Each model would be ran using the cross-fold validation. Average performance statstics reported back.
+# Note that the cross-fold validation models are not kept. Only using cross-fold validation to calculate performance statistics for us to choose which model parameters to use.
+# no. of models x no. of metrics
+xgb_model_results <- xgb_model_trained %>% 
+  collect_metrics()
 
+# Show the top 5 candidate models
+xgb_model_trained %>% 
+  show_best("mn_log_loss")
+
+# Save the best model parameters based on mn_log_loss metric
+best_params <- xgb_model_trained %>%
+  select_best('mn_log_loss', maximise = FALSE)
 ```
 
+
+# 9. Finalize Model with the best model parameters
+```{r}
+xgb_wflw_best <- xgb_wflw %>% 
+  finalize_workflow(best_params)
+```
+
+
+
+# 9. Making Predictions (Bertram)
+```{r}
+best_params <- xgb_model_trained %>%
+  select_best('mn_log_loss', maximise = FALSE)
+
+xgb_model_best <- xgb_model %>%
+  finalize_model(best_params)
+
+####
+
+xgb_wflw_best <- workflow() %>%
+  add_recipe(recipe_spec) %>%
+  add_model(xgb_model_best)
+
+resampling_results <- xgb_wflw_best %>%
+  fit_resamples(
+    resamples = resamples_cv,
+    control   = control_resamples(
+      verbose   = FALSE, 
+      save_pred = TRUE,
+      allow_par = TRUE))
+
+resample_predictions <- resampling_results %>%
+  mutate(.testing = map(splits, testing)) %>%
+  select(id, .predictions, .testing) %>%
+  unnest(c(.predictions, .testing), names_repair = "universal")
+
+signal <- resample_predictions %>%
+  select(- c(future_return_sign...208, .pred_0)) %>%
+  rename(future_return_pred = .pred_1,
+         future_return_sign = future_return_sign...6) %>%
+  arrange(date) %>%
+  mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
+         trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
+         return_buyhold = cumprod(1 + close_change_1d),
+         return_model = cumprod(1 + close_change_1d * signal - trading_cost))
+```
 
