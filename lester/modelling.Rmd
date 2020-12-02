@@ -47,7 +47,7 @@ eDate = "2020-11-30"
 
 
 # 2. Extracting Data/Adding features
-# 2.1 Getting Bitcoin Prices
+## 2.1 Getting Bitcoin Prices
 ```{r}
 # Get Bitcoin prices from Quandl. YMD.
 # Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
@@ -79,7 +79,7 @@ bitcoin_model <- bitcoin_price %>%
 bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
 ```
 
-# 2.2 Getting Bitcoin Features
+## 2.2 Getting Bitcoin Features
 ```{r}
 # quandl_tidy <- function(code, name, start_date, end_date) {
 #   df <- Quandl(code, start_date = start_date, end_date = end_date) %>%
@@ -127,7 +127,7 @@ bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove lastes
 ```
 
 
-# 2.3 Merge all data into 1 tibble
+## 2.3 Merge all data into 1 tibble
 ```{r}
 # Combine price data with features
 bitcoin_model <- bitcoin_model %>%
@@ -135,7 +135,7 @@ bitcoin_model <- bitcoin_model %>%
 ```
 
 
-# 3. Data Splitting and Resampling
+# 3. Train/Test Data Split
 ```{r}
 set.seed(123)
 
@@ -145,12 +145,38 @@ test <- bitcoin_model %>% filter(between(date, as.Date("2020-01-01"), as.Date("2
 
 # 4. Create Recipe
 ```{r}
-recipe_spec <- recipe(future_return_sign ~ ., data = train) %>% 
+recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
   update_role(date, future_return, close, new_role = "ID") # Exclude these columns from the model. Only used for ID purpose
 
 ```
 
-# 5. Define Model
+# 5. Create resamples from cross validation folds of 3 months
+```{r}
+# Cross Validation Folds for Tuning. Produces 7 folds.
+resamples_cv <- recipe_spec %>%
+  prep() %>%
+  juice() %>% 
+  time_series_cv(
+    date_var = date,
+    initial = '3 month',  # No. of data points from original data that are in analysis (training set)
+    assess = '3 month',   # No. of data points from original data that are in assessment (testing set)
+    skip = '3 month',     # Increment of resampling data set on assessment set only.
+    cumulative = TRUE    # TRUE, Analysis set will grow as resampling continues. Assessment set size remains static
+  )
+
+# Plot resampling timeline for each fold
+resamples_cv %>% 
+  plot_time_series_cv_plan(
+        date, close, # date variable and value variable
+        # Additional arguments passed to plot_time_series(),
+        .facet_ncol = 2,
+        .line_alpha = 0.5,
+        .interactive = FALSE
+    )
+
+```
+
+# 6. Define Model
 ```{r}
 xgb_model <- boost_tree(learn_rate = 0.01,
                         tree_depth = 1,
@@ -164,7 +190,7 @@ xgb_model <- boost_tree(learn_rate = 0.01,
 xgb_model
 ```
 
-# 6. Create Workflow
+# 7. Create Workflow
 ```{r}
 xgb_wflw <- workflow() %>%
   add_recipe(recipe_spec) %>%
@@ -173,26 +199,14 @@ xgb_wflw <- workflow() %>%
 xgb_wflw
 ```
 
-# 7. Create grid for tuning. Train and Tune Model.
+# 8. Create grid for tuning.
 ```{r}
 # Create grid. Create 10 models.
 xgb_params <- grid_max_entropy(trees(), size = 10)
-
-# Cross Validation Folds for Tuning. Produces 7 folds.
-resamples_cv <- recipe_spec %>%
-  prep() %>%
-  juice() %>%
-  time_series_cv(
-    date_var = date,
-    initial = '3 month',
-    assess = '3 month',
-    skip = '3 month',
-    cumulative = TRUE
-  )
-
+xgb_params
 ```
 
-# 8. Model Tuning with a Grid
+# 9. Model Tuning with a Grid
 ```{r}
 # Fit models at all different values chosen for each hyperparameter
 # 7 Folds. Results reported for each row.
@@ -219,8 +233,7 @@ best_params <- xgb_model_trained %>%
   select_best('mn_log_loss', maximise = FALSE)
 ```
 
-
-# 9. Finalize Model with the best model parameters
+# 10. Finalize workflow with the best model parameters
 ```{r}
 xgb_wflw_best <- xgb_wflw %>% 
   finalize_workflow(best_params)
@@ -230,22 +243,22 @@ xgb_wflw_best
 
 # 10. Fitting final model to training data
 ```{r}
-final_tree <- 
+xgb_final <- 
   xgb_wflw_best %>%
   fit(data = train)
 
-final_tree
+xgb_final
 
 # Training set predictions
-final_tree_training_pred <- 
-  predict(final_tree, train) %>% 
+xgb_final_training_pred <- 
+  predict(xgb_final, train) %>% 
   # Add in predicted class probabilities
-  bind_cols(predict(final_tree, train, type = "prob")) %>% 
+  bind_cols(predict(xgb_final, train, type = "prob")) %>% 
   # Add the true outcome data back in
   bind_cols(train %>% select(future_return_sign))
 
 # Get accuracy from predicting using training set
-final_tree_training_pred %>%
+xgb_final_training_pred %>%
   accuracy(truth = future_return_sign, .pred_class)
 
 ```
@@ -254,7 +267,7 @@ final_tree_training_pred %>%
 ```{r}
 # Extract model object from final workflow. 
 # Visualise variable importance using vip()
-final_tree %>% 
+xgb_final %>% 
   pull_workflow_fit() %>% 
   vip()
 ```
@@ -280,20 +293,20 @@ xgb_resampling %>% collect_metrics()
 ```{r}
 # Testing set predictions
 # Using the model that was trained with all the training data and fitting onto the never seen before test data
-final_tree_testing_pred <- 
-  predict(final_tree, test) %>% 
+xgb_final_testing_pred <- 
+  predict(xgb_final, test) %>% 
   # Add in predicted class probabilities
-  bind_cols(predict(final_tree, test, type = "prob")) %>% 
+  bind_cols(predict(xgb_final, test, type = "prob")) %>% 
   # Add the true outcome data back in
   bind_cols(test %>% select(future_return_sign))
 
 # Get accuracy from predicting using testing set
-final_tree_testing_pred %>%
+xgb_final_testing_pred %>%
   accuracy(truth = future_return_sign, .pred_class)
 ```
 
 
-# 9. Making Predictions (Bertram)
+# 14. Comparing returns to benchmark (Bertram)
 ```{r}
 
 # resample_predictions <- xgb_resampling %>%
