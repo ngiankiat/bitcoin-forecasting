@@ -129,56 +129,6 @@ bitcoin_model <- bitcoin_model[-1, ]
 
 ## <u>**SENTIMENT**</u>
 
-### **(TO IGNORE): Bitcoin News Articles - Sentiments** 
-
-* This is included because I feel that on top of technical analysis, sentiment analysis is also equally important. Although there is scraping of google hits, sentiments gathered from news articles can also be a possible feature to consider. This is because it can give us a general idea of people's opinions and sentiments about Bitcoin, which may be an equally good indicator as to how frequent people search bitcoin on the search engine.
-
-* This is to see if a positive/negative news will affect the next day or current day price of Bitcoin. The idea is to monitor the public mood about the Bitcoin market or perhaps if the Bitcoin prices will be affected by certain new regulations introduced. We can then see if there is any correlation between the sentiment and the closing price of bitcoin, and hopefully will add value to the model we are building to predict future prices of Bitcoin and give a recommendation if it is the right time to enter and buy Bitcoin.
-
-* Disclaimer and limitations in the news articles scrapped are mentioned in the 'Bitcoin News Analytics' RMarkdown.
-* The websites where the scrapping of news articles are done are also mentioned in that RMarkdown. 2 news site are used, though there may be concerns about the biasness of articles because it is taken from Bitcoin related websites, but results shown there are mixed sentiments on Bitcoin from the articles on those 2 websites chosen. There is no clear swayness towards positivity on Bitcoin.
-
-```{r,eval=FALSE}
-news_articles_sentiments_bing <- read.csv("bitcoin_sentiment_bing.csv")
-news_articles_sentiments_bing <- news_articles_sentiments_bing[-c(1)] # drop first column
-
-news_articles_sentiments_afinn <- read.csv("bitcoin_sentiment_afinn.csv")
-news_articles_sentiments_afinn <- news_articles_sentiments_afinn[-c(1)] # drop first column
-
-news_articles_sentiments_sentimentr <- read.csv("bitcoin_sentiment_sentimentr.csv")
-news_articles_sentiments_sentimentr <- news_articles_sentiments_sentimentr[-c(1)] # drop first column
-
-```
-
-```{r,eval=FALSE}
-# "bing"
-colnames(news_articles_sentiments_bing) <- c("date","positive_sentiment_bing")
-news_articles_sentiments_bing$date <- as.Date(news_articles_sentiments_bing$date)
-bitcoin_model <- bitcoin_model %>% 
-  left_join(news_articles_sentiments_bing)
-
-# "Afinn"
-colnames(news_articles_sentiments_afinn) <- c("date","positive_sentiment_afinn")
-news_articles_sentiments_afinn$date <- as.Date(news_articles_sentiments_afinn$date)
-bitcoin_model <- bitcoin_model %>% 
-  left_join(news_articles_sentiments_afinn)
-
-```
-
-```{r,eval=FALSE}
-#Using sentimentr
-
-news_articles_sentiments_sentimentr_extract <- select(news_articles_sentiments_sentimentr,c(article_date,ave_sentiment))
-news_articles_sentiments_sentimentr_extract <- news_articles_sentiments_sentimentr_extract %>%
-  mutate(positive_sentiment_sentimentr = ifelse(ave_sentiment>0,1,0))
-news_articles_sentiments_sentimentr_extract  <- select(news_articles_sentiments_sentimentr_extract, c(article_date,positive_sentiment_sentimentr))
-setnames(news_articles_sentiments_sentimentr_extract, "article_date", "date")
-news_articles_sentiments_sentimentr_extract$date <- as.Date(news_articles_sentiments_sentimentr_extract$date)
-bitcoin_model <- bitcoin_model %>% 
-  left_join(news_articles_sentiments_sentimentr_extract)
-
-```
-
 ### **Twitter Volume - Bitcoin**
 
 * The data is extracted from Sprout Social which is a social media software company headquartered in Chicago.
@@ -193,13 +143,6 @@ colnames(twitter_volume) <- c("date", "tweets_volume")
 bitcoin_model <- bitcoin_model %>% left_join(twitter_volume)
 
 bitcoin_model$tweets_volume[is.na(bitcoin_model$tweets_volume)] <- 0 # Replace the missing value before dec 2013 with 0
-
-```
-
-```{r}
-ggplot(bitcoin_model)  + 
-  geom_bar(aes(x=date, y=tweets_volume),stat="identity", fill="tan1", colour="sienna3")+
-  geom_line(aes(x=date, y=close*50),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./50, name = "bitcoin_price"))
 
 ```
 
@@ -610,6 +553,7 @@ bitcoin_model$aaii_bearish_sentiment[is.na(bitcoin_model$aaii_bearish_sentiment)
 * Bitcoin is mostly traded in China [(Reference)](https://www.businessinsider.com/bitcoin-trading-china-yuan-remnibi-2017-1)
 * Chinese mining pools control more than 60% of the Bitcoin network’s collective hashrate [(Reference)](https://news.bitcoin.com/65-of-global-bitcoin-hashrate-concentrated-in-china/) and one-third of global hash rate is in Xinjiang  [(Reference).](https://cointelegraph.com/news/a-single-chinese-region-accounts-for-one-third-of-global-btc-hash-rate)
 * So it might be worthwhile to account for movements in the exchanges between the dollar with the yuan 
+* Bitcoin is used as a vehicle for capital flight out of China. Savers and investors frequently use the cryptocurrency as an alternative holding asset against a weakening Yuan. There is also evidence of a significant negative correlation between Yuan and Bitcoin prices. [(Reference)](https://cointelegraph.com/explained/how-china-influences-bitcoin-price-explained)
 
 ```{r}
 cny_usd <- get_yahoo('USDCNY=X') %>%
@@ -636,8 +580,6 @@ bitcoin_hr <- select(bitcoin_data, c(date,bchain.hrate))
 bitcoin_model <- bitcoin_model %>% left_join(bitcoin_hr)
 ```
 
-# **Predictive Modelling**
-
 Using data from 2013 Oct onwards
 ```{r}
 bitcoin_model <- subset(bitcoin_model, date>= "2018-01-01" & date <= "2020-11-30")
@@ -654,3 +596,215 @@ skim(bitcoin_features)
 write.csv(bitcoin_features,"bitcoin_features.csv")
 
 ```
+
+
+## **Visualisation**
+```{r}
+ggplot(bitcoin_model)  + 
+  geom_bar(aes(x=date, y=tweets_volume),stat="identity", fill="tan1", colour="sienna3")+
+  geom_line(aes(x=date, y=close*50),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./50, name = "bitcoin_price"))
+
+```
+
+```{r}
+df_2 <- subset(df_1, date>= "2018-01-01" & date <= "2020-11-30")
+
+# colors column for increasing and decreasing
+for (i in 1:length(df_2[,1])) {
+  if (df_2$close[i] >= df_2$open[i]) {
+    df_2$direction[i] = 'Increasing'
+  } else {
+    df_2$direction[i] = 'Decreasing'
+  }
+}
+
+i <- list(line = list(color = '#008000'))
+d <- list(line = list(color = '#FF0000'))
+
+# plot candlestick chart
+
+fig2 <- df_2 %>% plot_ly(x = ~date, type="candlestick",
+                      open = ~open, close = ~close,
+                      high = ~high, low = ~low, name = "BTC",
+                      increasing = i, decreasing = d) 
+fig2 <- fig2 %>% add_lines(x = ~date, y = ~up , name = "B Bands",
+                         line = list(color = '#000080', width = 0.5),
+                         legendgroup = "Bollinger Bands",
+                         hoverinfo = "none", inherit = F) 
+fig2 <- fig2 %>% add_lines(x = ~date, y = ~dn, name = "B Bands",
+                         line = list(color = '#000080', width = 0.5),
+                         legendgroup = "Bollinger Bands", inherit = F,
+                         showlegend = FALSE, hoverinfo = "none") 
+fig2 <- fig2 %>% add_lines(x = ~date, y = ~mavg, name = "Mv Avg",
+                         line = list(color = '#800000', width = 0.5),
+                         hoverinfo = "none", inherit = F) 
+fig2 <- fig2 %>% layout(yaxis = list(title = "Price"))
+
+# plot volume bar chart
+fig3 <- df_2 
+fig3 <- fig3 %>% plot_ly(x=~date, y=~volume_currency, type='bar', name = "BTC Volume",
+                         color = ~direction, colors = c('#008000','#FF0000')) 
+fig3 <- fig3 %>% layout(yaxis = list(title = "Volume"))
+
+# create rangeselector buttons
+rs <- list(visible = TRUE, x = 0.5, y = -0.055,
+           xanchor = 'center', yref = 'paper',
+           font = list(size = 9),
+           buttons = list(
+             list(count=1,
+                  label='RESET',
+                  step='all'),
+             list(count=1,
+                  label='1 YR',
+                  step='year',
+                  stepmode='backward'),
+             list(count=3,
+                  label='3 MO',
+                  step='month',
+                  stepmode='backward'),
+             list(count=1,
+                  label='1 MO',
+                  step='month',
+                  stepmode='backward')
+           ))
+
+# subplot with shared x axis
+fig2 <- subplot(fig2, fig3, heights = c(0.7,0.2), nrows=2,
+               shareX = TRUE, titleY = TRUE)
+fig2 <- fig2 %>% layout(title = paste("BTC: " , "2018-01-01", " -","2020-11-30"),
+                      xaxis = list(rangeselector = rs),
+                      legend = list(orientation = 'h', x = 0.5, y = 1,
+                                    xanchor = 'center', yref = 'paper',
+                                    font = list(size = 10),
+                                    bgcolor = 'transparent'))
+
+fig2
+
+```
+
+```{r}
+plot1 <- ggplot(df_2, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("darkred"))
+plot2 <- ggplot(df_2, aes(x = date)) +  geom_line(aes(y = bb_width, colour = "BOLL BW")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot1), ggplotGrob(plot2), size = "last"))
+
+```
+
+* It was mentioned that besides looking at the BB width, it should be accompanied with the usage of identifying the breakout direction. If there is a positive divergence, it indicates that its heading upwards while price is heading downwards or neutral --> bullish sign.
+
+```{r}
+plot3 <- ggplot(bitcoin_model, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("darkred"))
+plot4 <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = rsi, colour = "RSI")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot3), ggplotGrob(plot4), size = "last"))
+
+# another visualisation instead
+rsi_vs_close <- ggplot(bitcoin_model, aes(x = date))
+rsi_vs_close <- rsi_vs_close + geom_line(aes(y = close, colour = "Bitcoin Closing Price"))
+rsi_vs_close <- rsi_vs_close + geom_line(aes(y = rsi*100, colour = "Relative Strength Index"))
+rsi_vs_close <- rsi_vs_close + scale_y_continuous(sec.axis = sec_axis(~./100, name = "Title"))
+rsi_vs_close <- rsi_vs_close + scale_colour_manual(values = c("darkred", "steelblue"))
+rsi_vs_close
+
+
+# Combined with bb_width
+# RSI - tells the direction, bb_width - tells the intensity
+# e.g. RSI going down --> towards oversold band width increases a lot too, may be an indication to buy
+# e.g. RSI going up --> bullish, already gaining momentum, bandwidth increasing too, may also be an indication to buy, so depends on the risk appetite of investor when to enter.
+# band width becoming narrower, can be either at the top of bottom of bollinger band, so to determine, look at RSI. RSI increasing means is at the bottom of the band and hence can possibly buy. 
+#bearish or bullish bb
+
+plot2 <- ggplot(df_1, aes(x = date)) +  geom_line(aes(y = bb_width, colour = "Bollinger Band Width")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+plot3 <- ggplot(bitcoin_model, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("darkred"))
+plot4 <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = rsi, colour = "RSI")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot3), ggplotGrob(plot4), ggplotGrob(plot2), size = "last"))
+
+```
+
+```{r}
+macd$direction <- ifelse(macd$macd_signal_dist>0,"Increasing","Decreasing")
+
+macd_chart <- ggplot(macd, aes(x = date))
+macd_chart <- macd_chart + geom_line(aes(y = MACD, colour = "Moving Average Covergence Divergence (12,6,9)"))
+macd_chart <- macd_chart + geom_line(aes(y = signal, colour = "Signal"), linetype="dashed")
+macd_chart <- macd_chart + geom_bar(aes(y = macd_signal_dist,fill = direction),stat = "identity") + scale_fill_manual(values = c("Increasing" = "#008000", "Decreasing" = "#FF0000"))
+macd_chart <- macd_chart + scale_colour_manual(values = c("darkred", "steelblue"))
+macd_chart <- macd_chart + scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')))
+macd_chart
+
+plot5<- ggplot(macd, aes(x = date)) +  geom_line(aes(y = closing_price, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot5), ggplotGrob(macd_chart), size = "last"))
+
+```
+
+```{r}
+ggplot(acu_dis_df)  + 
+  geom_line(aes(x=date, y=cumulative_cmfv),stat="identity", colour="sienna3")+
+  geom_line(aes(x=date, y=close*1000000),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./1000000, name = "bitcoin_price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y"))
+```
+
+```{r}
+ggplot(bitcoin_model)  + 
+  geom_line(aes(x=date, y=close),stat="identity", colour="sienna3")+
+  geom_line(aes(x=date, y=gold_price*10),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./10, name = "gold_price"))
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
