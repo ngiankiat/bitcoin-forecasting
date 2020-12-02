@@ -35,6 +35,7 @@ bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD") %>%
 
 
 # Data about bitcoin activity, trasnaction fees and mining etc
+# each item is in the list contains the code for Quandl and the accompanying column name to name it
 code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
                   c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
                   c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
@@ -74,13 +75,75 @@ for (i in seq_along(code_list)) {
   
   print(str_c("Downloading data for ", code_list[[i]][1], "."))
   
+  
   bitcoin_data <- bind_rows(bitcoin_data, 
                             quandl_tidy(code_list[[i]][1],#first item in the list is the code of the data 'column' to pull from Quandl
                                         # this is the second item in the list, just to name the column nicely
                                         code_list[[i]][2]))
 }
 
+print("Done downloading data")
+
+
+bitcoin_data <- bitcoin_data %>%
+  select(-name) %>%
+  spread(code, value)
+
+# make.names is to clean the names
+colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
 
 
 
+#--------------------------------------------------------------------------
+# Scraping google data
 
+# Making a column of dates
+download_all <- FALSE
+
+# if (download_all == TRUE){
+#   # 10 years worth of dates, by month
+#   dates <- tibble(dates = ymd("2011-01-01") + days(0:3650)) %>%
+#     filter(dates <= ymd("2020-11-30"))
+# } else{
+#   dates <- tibble(dates=ymd("2018-01-01") + days(0:3650)) %>%
+#     filter(dates <= ymd("2020-11-30"))
+# }
+
+
+# Create a function to pull google trends data
+# limitation is the query only works by week if you do over a span
+
+google_trends <- function(query, begin_date, end_date) {
+  
+  df <- gtrends(keyword = 'bitcoin',
+                time = str_c(begin_date, ' ', end_date))[['interest_over_time']] %>%
+    select(date, hits) %>%
+    mutate(date = as.Date(date)) %>%
+    as_tibble()
+  
+  return(df)
+}
+
+for (i in 1:nrow(dates)) {
+  
+  month <- dates[["dates"]][i]
+  begin_date <- as.Date(month)
+  end_date <- as.Date(month) + months(1) - days(1)
+  end_date <- as.Date(ifelse(end_date >= Sys.Date(), Sys.Date(), end_date))
+  
+  df <- google_trends("bitcoin", begin_date, end_date)
+  
+  write_csv(df, file.path('pub_trends', str_c("google-trends-daily-", begin_date, "-", end_date, ".csv")))
+  
+}
+
+monthly <- google_trends('bitcoin', '2018-01-01', '2020-11-30') %>%
+  rename(hits_monthly = hits)
+
+bitcoin_google <- list.files('pub_trends') %>%
+  map_df(~ read_csv(file.path('pub_trends', str_c(.)), col_types = c('Di'))) %>%
+  rename(hits_daily = hits) %>%
+  left_join(monthly) %>%
+  fill(hits_monthly) %>%
+  mutate(hits_monthly = as.numeric(hits_monthly),
+         hits_daily = hits_daily * hits_monthly / 100)
