@@ -120,7 +120,7 @@ head(dfnlp5)
 library(tidytext)
 library(dplyr)
 
-# Tokenize Text
+# count words, tokenize
 
 reddit_token <- dfnlp5 %>%
   select(comment) %>%
@@ -128,6 +128,14 @@ reddit_token <- dfnlp5 %>%
   group_by(word) %>%
   summarize(n_tokens = n()) %>%
   arrange(desc(n_tokens))
+
+reddit_token
+```
+
+```{r}
+#unnnest comment column but keep date
+reddit_token <- dfnlp5 %>%
+  unnest_tokens(word, comment)
 
 reddit_token
 ```
@@ -151,12 +159,25 @@ reddit_token
 
 ```
 
+
 ```{r}
+#sentiment score - bing lexicon
+
+sentiment_score <-
+reddit_token %>% 
+  inner_join(get_sentiments("bing")) %>% 
+  count(date, sentiment) %>% 
+  spread(sentiment, n, fill=0) %>% 
+  mutate(sentiment=positive-negative)
+
+sentiment_score
 
 ```
 
 ```{r}
-
+#viewing of score in viewer
+sentiment_score %>%
+DT::datatable()
 ```
 
 ```{r}
