@@ -39,6 +39,7 @@ library(timetk)  # Functions to visualize, wrangle, and feature engineer time se
 library(xgboost) # Machine learning algos
 library(vip) # For constructing variable importance plots
 library(caret) # Confusion matrix
+library(stacks) # Ensemble
 ```
 
 ```{r}
@@ -217,15 +218,19 @@ xgb_params
 
 ## 8.2 Model Tuning with a Grid
 ```{r}
-# Fit models at all different values chosen for each hyperparameter
-# 7 Folds. Results reported for each row.
+# For each fold, pass through all possible models generated from grid size
+# Each row represents one fold
+# In each fold, no. of models x no. of metrics
+# In each fold, for .predictions, no. of models x length of test data
 xgb_model_trained <- xgb_wflw %>% tune_grid(
   grid = xgb_params,
   metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
   resamples = resamples_cv,
   control = control_resamples(verbose = FALSE,
                               save_pred = TRUE,
+                              save_workflow = FALSE,
                               allow_par = TRUE))
+
 # Display results in a tidy tibble
 # Each model would be ran using the cross-fold validation. Average performance statstics reported back.
 # Note that the cross-fold validation models are not kept. Only using cross-fold validation to calculate performance statistics for us to choose which model parameters to use.
