@@ -350,23 +350,56 @@ prophet_forecasts <-
     rbind(tail(bitcoin_price_train_tbl, 1),
           prophet_forecasts)
 
-# Compute daily returns using tq_mutate
-prophet_forecasts <- 
-    prophet_forecasts %>%
-    tq_mutate(select = price,
-              mutate_fun = periodReturn,
-              period = 'daily',
-              type = 'arithmetic',
-              col_rename = 'future_return')
-
 # New column that contains 1 if Bitcoin prices increase, 0 otherwise
 prophet_forecasts_sign <-
     prophet_forecasts %>%
-    mutate(future_return_sign = ifelse(prophet_forecasts$price > lag(prophet_forecasts$price), 
+    mutate(pred_signal = ifelse(prophet_forecasts$price > lag(prophet_forecasts$price), 
                                        1, 0)
     ) %>%
     filter(date >= "2020-07-01")
 
 prophet_forecasts_sign
 ```
+
+
+# 5. Trading Strategy
+
+We simulate the execution of a trading strategy where we buy Bitcoin on the days the `prophet` model predicts a day-on-day increase in Bitcoin prices and sell otherwise.
+
+```{r trading strategy}
+# Add last row of train data to test data
+bitcoin_price_test_returns <-
+  rbind(tail(bitcoin_price_train_tbl, 1),
+        bitcoin_price_test_tbl)  
+
+# Compute future return and future return sign for test data
+bitcoin_price_test_returns <-
+  bitcoin_price_test_returns %>%
+  tq_mutate(select = price,
+          mutate_fun = periodReturn,
+          period = 'daily',
+          type = 'arithmetic',
+          col_rename = 'future_return') %>%
+  mutate(future_return_sign = ifelse(prophet_forecasts$price > lag(prophet_forecasts$price),
+                                     1, 0)
+  ) %>%
+  filter(date >= "2020-07-01")
+
+# Merge test data and prophet prediction signal
+test_and_prophet <- 
+  bitcoin_price_test_returns %>%
+  bind_cols(select(prophet_forecasts_sign, "pred_signal")) %>%
+  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
+         return_buyhold = cumprod(1 + future_return),
+         return_prophet = cumprod(1 + future_return * pred_signal - trading_cost))
+
+# Visualisation of prophet strategy vs buy-and-hold strategy
+test_and_prophet %>% 
+  select(date, return_buyhold, return_prophet) %>% 
+  gather(key = "strategy", value = "returns", -date) %>% 
+  ggplot(aes(x=date, y = returns)) +
+    geom_line(aes(color = strategy)) +
+    theme_light()
+```
+
 
