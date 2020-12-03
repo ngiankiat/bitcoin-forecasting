@@ -2,21 +2,16 @@
 title: "Bitcoin Additional Features"
 ---
 
-**Currently these are the additional features added: (updated as of 01/12)**
+**Currently these are the additional features added: (updated as of 02/12)**
 
 * <u>**Sentiment**</u>
 1. News Articles
-2. If want to use reddit posts: can consider using <code>library(RedditExtractoR)</code> and <code>get_reddit(...)</code>
-3. If want to use Twitter (i can only think of using python <code>twint</code> which does not need API to scrape the tweets)
+2. Reddit
+3. Twitter 
     + As of now, gathered the total volume of tweets with regards to Bitcoin (without any scraping)
     + No sentiment analysis conducted
 
 * <u>**Technical**</u>
-
-Comments:
-
-* I think some of the indicators might measure the same thing? Do help to remove any if its not a necessary feature.
-* Not sure if can combine say e.g. 2 different indicators into 1 indicator as a feature?
 
 1. Bollinger Band Width
 2. RSI
@@ -35,13 +30,20 @@ Comments:
 1. Fed Fund Rates
 2. S&P500 Closing Price
 3. Gold (XAU/USD)
+4. US Dollar Index Price
+5. Created a Crypto Index
 
-A paper uses the following below: [Link](https://arxiv.org/ftp/arxiv/papers/1706/1706.01437.pdf)
+A paper uses the following 3 below: [Link](https://arxiv.org/ftp/arxiv/papers/1706/1706.01437.pdf)
 
-4. Financial Stress Index
-5. AAII Sentiment - Is a weekly data, but since the bitcoin price is daily, i just fill the days with the week data, not sure if that's ok?
-7. CNY/USD 
-8. Some of the more important bitcoin (hashrate) - will see what else in the bitcoin_data df is useful
+6. Financial Stress Index
+7. AAII Sentiment - Is a weekly data, but since the bitcoin price is daily, i just fill the days with the week data, not sure if that's ok?
+8. CNY/USD 
+
+Given: 
+
+9. Blockchain Indicators
+10. Bitcoin Drawdown
+11. Google Trends
 
 
 # **Load Packages**
@@ -160,7 +162,6 @@ bitcoin_model$tweets_volume[is.na(bitcoin_model$tweets_volume)] <- 0 # Replace t
 ```{r}
 # create Bollinger Bands
 bitcoin_price_data <- bitcoin_price
-library(hablar)
 bitcoin_price_data <- bitcoin_price_data %>% 
   convert(num(open:weighted_price))
 bbands <- BBands(bitcoin_price_data[,c("high","low","close")]) #dn - The lower bollinger band, mavg - middle moving average, up - the upper bollinger band
@@ -617,7 +618,7 @@ for (i in 1:nrow(dates)) {
 
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Download Google Trends Monthly Data
 monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>% 
   rename(hits_monthly = hits)
@@ -626,7 +627,7 @@ monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>%
 monthly$hits_monthly[monthly$hits_monthly=="<1"]<- "1"
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Rebase
 bitcoin_google <- list.files('google-trend-daily') %>%
   map_df(~ read_csv(file.path('google-trend-daily', str_c(.)), col_types = c('Di'))) %>%
@@ -639,6 +640,8 @@ bitcoin_google <- list.files('google-trend-daily') %>%
 ```
 
 ```{r}
+# load in the google trends already prepared previously instead of running the above 3 chunks
+# then add to model
 bitcoin_model <- bitcoin_model %>% 
   left_join(bitcoin_google)
 
@@ -664,6 +667,71 @@ bitcoin_model <- bitcoin_model %>% fill(dollar_index_close, .direction = "down")
 
 ```
 
+### **Create a Crypto Market Cap Index**
+
+Reference from Kaggle: https://www.kaggle.com/taniaj/quantifying-cryptocurrency-price-movements and
+https://blog.shrimpy.io/blog/cryptocurrency-index-funds-step-by-step-guide
+
+Another way to get a comparison of how any particular crypto is moving relative to the crypto market is to build an index to compare it to. An index will also be able to show trends and changes in investing patterns.
+
+We have created a simple crypto index based on weighted market cap of top 10 crypto. 
+
+* Firstly, Asset selection: 
+
+    + We will be selecting the top 10 crypto based on market cap. (According to coinmarketcap.com)
+
+1. Bitcoin (BTC)
+2. Ethereum (ETH)
+3. XRP
+4. Tether (USDT)
+5. Litecoin (LTC)
+6. Bitcoin Cash (BCH)
+7. Chainlink (LINK)
+8. Cardano (ADA)
+9. Polkadot (DOT) - REMOVED because no data backed to Jan 01 2018
+10. Binance Coin (BNB)
+11. Stellar (XLM)
+
+
+* Secondly, Allocation Distribution: 
+
+    + There are a few ways we can do this: Market cap Weighted, Square Root Market Cap Weighted, Evenly Weighted, Minimum Weight, Maximum Weight. 
+    + We will not use market cap weighted because crypto such as Bitcoin has a significantly higher market cap than any other crypto in the index so the index will not be good if Bitcoin has a much significant higher weightage. Instead, we will use square root market cap weighted to have better diversification of the weights of the 10 crypto in this index. 
+    + Further improvement in future could be looking at setting a min weight for those rank 8-10, or setting a max weight to Bitcoin.
+    + Continuous improvement of this index will be necessary. Currently, it will just serve as a benchmark for comparison.
+
+```{r}
+
+top10_crypto$date <- as.Date(top10_crypto$date, format="%B %d, %Y")
+
+mkt_cap_total <- top10_crypto %>% 
+  group_by(date) %>% 
+  summarise(sqrt_sum_mkt_cap = sum(sqrt(market_cap)))
+
+top10_crypto_df <- top10_crypto %>% left_join(mkt_cap_total)
+top10_crypto_df <- top10_crypto_df %>% mutate(weightage = sqrt(market_cap)/sqrt_sum_mkt_cap)
+top10_crypto_df <- top10_crypto_df %>% group_by(date)
+
+# when take sqrt (the weightage of each crypto in the top10 mix will be more acceptable)
+# e.g. 2018-01-01: BTC - 28.4%, ETH - 16.2%, XRP - 18.1%, USDT - 2.2%, LTC - 6.6%, BCH - 12.0%, LINK - 0.9%, ADA - 8.1%, BNB - 1.7%, XLM - 5.5%. Compared to if merely based on market cap, bitcoin would have a proportion of 70%. 
+
+#lets assume the base of this index is 10000, so the
+divisor = subset(mkt_cap_total, date == "2018-01-01")$sqrt_sum_mkt_cap/10000
+mkt_cap_total <- mkt_cap_total %>% mutate(index = sqrt_sum_mkt_cap/divisor)
+
+
+crypto_index <- mkt_cap_total %>% tq_mutate(select = index,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'log',                            
+            col_rename = 'crypto_index_return')
+
+# we will just add the returns of index into the model
+crypto_index_df <- select(crypto_index, c(date,crypto_index_return))
+
+bitcoin_model <- bitcoin_model %>% left_join(crypto_index_df)
+
+```
 
 ### Adjusting missing values for some features
 
@@ -687,7 +755,6 @@ bitcoin_model <- select(bitcoin_model, -c(bchain.bcddc,bchain.bcdde,bchain.bcddm
 median_confirmation_time_bitcoin$date <- as.Date(median_confirmation_time_bitcoin$date, format="%d/%m/%Y" )
 colnames(median_confirmation_time_bitcoin) <- c("date", "bchain.atrct")
 bitcoin_model <- bitcoin_model %>% left_join(median_confirmation_time_bitcoin)
-
 
 # missing one value for bchain.naddu - Bitcoin Number of Unique Addresses Used: 23 May 2020
 ## number obtained from blockchain website: 588174
@@ -893,8 +960,13 @@ ggplot(bitcoin_model)  +
   scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y"))
 ```
 
+```{r}
+ggplot(mkt_cap_total, aes(x = date)) + 
+  geom_line(aes(y = index), colour = "blue", alpha = 0.8)
+```
 
-* Number of cryptocurrency in market
+
+
 
 
 

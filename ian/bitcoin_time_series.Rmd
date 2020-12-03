@@ -24,7 +24,8 @@ knitr::opts_chunk$set(
   warning = FALSE,
   cache = FALSE,
   fig.align = "center",
-  class.source = 'white'
+  class.source = 'white',
+  options(scipen=999) # suppress scientific notation
 )
 ```
 
@@ -71,57 +72,9 @@ bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD") %>%
 colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
 ```
 
-## 2.3 Bitcoin Indicators
-
-Data about bitcoin activity, transaction fees and mining.
-
-```{r import other Bitcoin indicators}
-code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
-                  c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
-                  c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
-                  c("BCHAIN/ETRAV", "Bitcoin Estimated Transaction Volume BTC"), 
-                  c("BCHAIN/ETRVU", "Bitcoin Estimated Transaction Volume USD"), 
-                  c("BCHAIN/TRVOU", "Bitcoin USD Exchange Trade Volume"), 
-                  c("BCHAIN/NTRAN", "Bitcoin Number of Transactions"), 
-                  c("BCHAIN/NTRAT", "Bitcoin Total Number of Transactions"), 
-                  c("BCHAIN/NTREP", "Bitcoin Number of Transactions Excluding Popular Addresses"), 
-                  c("BCHAIN/NTRBL", "Bitcoin Number of Tansaction per Block"), 
-                  c("BCHAIN/ATRCT", "Bitcoin Median Transaction Confirmation Time"), 
-                  c("BCHAIN/TRFEE", "Bitcoin Total Transaction Fees"), 
-                  c("BCHAIN/TRFUS", "Bitcoin Total Transaction Fees USD"), 
-                  c("BCHAIN/CPTRA", "Bitcoin Cost Per Transaction"), 
-                  c("BCHAIN/CPTRV", "Bitcoin Cost % of Transaction Volume"), 
-                  c("BCHAIN/BLCHS", "Bitcoin api.blockchain Size"), 
-                  c("BCHAIN/AVBLS", "Bitcoin Average Block Size"), 
-                  c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"), 
-                  c("BCHAIN/HRATE", "Bitcoin Hash Rate"), 
-                  c("BCHAIN/MIREV", "Bitcoin Miners Revenue"), 
-                  c("BCHAIN/BCDDE", "Bitcoin Days Destroyed"), 
-                  c("BCHAIN/BCDDW", "Bitcoin Days Destroyed Minimum Age 1 Week"), 
-                  c("BCHAIN/BCDDM", "Bitcoin Days Destroyed Minimum Age 1 Month"), 
-                  c("BCHAIN/BCDDY", "Bitcoin Days Destroyed Minimum Age 1 Year") ,
-                  c("BCHAIN/BCDDC", "Bitcoin Days Destroyed Cumulative"))
-
-bitcoin_data <- tibble()
-
-for (i in seq_along(code_list)) { 
-  
-  print(str_c("Downloading data for ", code_list[[i]][1], "."))
-  
-  bitcoin_data <- bind_rows(bitcoin_data, 
-                            quandl_tidy(code_list[[i]][1], code_list[[i]][2]))
-  
-}
-
-bitcoin_data <- bitcoin_data %>%
-  select(-name) %>%
-  spread(code, value)
-
-colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
-```
 
 ```{r remove local variables used to import data, echo = FALSE}
-rm(code_list, i, quandl_tidy)
+rm(quandl_tidy)
 ```
 
 After importing the Bitcoin price data, we narrow our focus to the Bitcoin daily closing prices. Note that there are some days where the closing price is $0. In those cases, we will use the previous day's closing price to fill these values
@@ -138,23 +91,23 @@ bitcoin_price_tbl <-
 head(bitcoin_price_tbl)
 ```
 
-Split the data into training and testing data to test accuracy of forecasts. For now, we will set the forecast period to 365 days (or 1 year).
+Split the data into training and testing data to test accuracy of forecasts. For now, we will set the training data period from January 2018 to June 2020, and the forecast period from July to November 2020.
 
 ```{r train test split}
 # Keep last 365 days as test data
 bitcoin_price_test_tbl <- 
   bitcoin_price_tbl %>%
-  filter(date >= "2020-01-01" & date <= "2020-11-30")
+  filter(date >= "2020-07-01" & date <= "2020-11-30")
 
 # Remove test data rows from original dataset
 bitcoin_price_train_tbl <- 
   bitcoin_price_tbl %>%
-  filter(date >= "2018-01-01" & date <= "2019-12-31")
+  filter(date >= "2018-01-01" & date <= "2020-06-30")
 ```
 
 
 
-# 3. Time Series
+# 3. Auto-ARIMA
 
 Sources: 
 
@@ -174,7 +127,7 @@ bitcoin_price_train_tbl %>%
     theme_tq() +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
     scale_y_continuous(labels = scales::dollar_format()) +
-    labs(title = "Bitcoin Prices: Jan 2018 through Dec 2020")
+    labs(title = "Bitcoin Prices: Jan 2018 through Jun 2020")
 ```
 
 ## 3.2 ARIMA Forecasting
@@ -297,7 +250,9 @@ tibble(me, rmse, mae, mape, mpe) %>% glimpse()
 
 # 4. Time Series with Modeltime
 
-```{r modeltime}
+The `modeltime` package allows us to easily build several time series models using the tidymodels framework and compare the predictions of all models on the same plot.
+
+```{r modeltime forecast}
 library(tidymodels)
 library(modeltime)
 library(lubridate)
@@ -307,7 +262,7 @@ model_fit_arima_no_boost <- arima_reg() %>%
     set_engine(engine = "auto_arima") %>%
     fit(price ~ date, data = bitcoin_price_train_tbl)
 
-# Model 2: arima_boost
+# Model 2: arima with XGBoost
 model_fit_arima_boosted <- arima_boost(
     min_n = 2,
     learn_rate = 0.015
@@ -326,12 +281,27 @@ model_fit_prophet <- prophet_reg() %>%
     set_engine(engine = "prophet") %>%
     fit(price ~ date, data = bitcoin_price_train_tbl)
 
+# Model 5: prophet with XGBoost
+model_fit_prophet_boosted <- prophet_boost(
+        seasonality_daily  = FALSE, 
+        seasonality_weekly = FALSE, 
+        seasonality_yearly = FALSE,
+        changepoint_range  = 0.90,
+        trees              = 300,
+        mtry               = 0.50,
+        min_n              = 30,
+        learn_rate         = 0.15
+    ) %>% 
+    set_engine("prophet_xgboost") %>%
+    fit(price ~ date, data = bitcoin_price_train_tbl)
+
 # Add fitted models to a Modeltime Table
 models_tbl <- modeltime_table(
     model_fit_arima_no_boost,
     model_fit_arima_boosted,
     model_fit_ets,
-    model_fit_prophet
+    model_fit_prophet,
+    model_fit_prophet_boosted
 )
 
 # Calibrate the model to test data
@@ -350,4 +320,86 @@ calibration_tbl %>%
       .interactive      = TRUE
     )
 ```
+
+From the chart above, the predicted values generated by the normal `prophet` model stands out the most due to its variability as compared to the straight line predictions for the rest of the models.
+
+```{r modeltime accuracy}
+calibration_tbl %>%
+    modeltime_accuracy() %>%
+    table_modeltime_accuracy(
+        .interactive = TRUE
+    )
+```
+
+Comparing the accuracy of the 5 time series models we trained, the `prophet` models have the lowest MAPE scores. However, the prices of Bitcoin are unlikely to exhibit a steady rise as predicted by the  `prophet_boost()` model. Thus, we will treat the base `prophet` model (model 4) as the most ideal time series model.
+
+```{r}
+# Keep prophet forecasts
+prophet_forecasts <-
+    calibration_tbl %>%
+    modeltime_forecast(
+        new_data    = bitcoin_price_test_tbl,
+        actual_data = rbind(bitcoin_price_train_tbl,
+                            bitcoin_price_test_tbl)
+    ) %>% filter(.model_id == 4) %>%
+    select(.index, .value) %>%
+    rename(date = .index, price = .value)
+
+# Append the last row of train data to prospect forecasts
+prophet_forecasts <-
+    rbind(tail(bitcoin_price_train_tbl, 1),
+          prophet_forecasts)
+
+# New column that contains 1 if Bitcoin prices increase, 0 otherwise
+prophet_forecasts_sign <-
+    prophet_forecasts %>%
+    mutate(pred_signal = ifelse(prophet_forecasts$price > lag(prophet_forecasts$price), 
+                                       1, 0)
+    ) %>%
+    filter(date >= "2020-07-01")
+
+prophet_forecasts_sign
+```
+
+
+# 5. Trading Strategy
+
+We simulate the execution of a trading strategy where we buy Bitcoin on the days the `prophet` model predicts a day-on-day increase in Bitcoin prices and sell otherwise.
+
+```{r trading strategy}
+# Add last row of train data to test data
+bitcoin_price_test_returns <-
+  rbind(tail(bitcoin_price_train_tbl, 1),
+        bitcoin_price_test_tbl)  
+
+# Compute future return and future return sign for test data
+bitcoin_price_test_returns <-
+  bitcoin_price_test_returns %>%
+  tq_mutate(select = price,
+          mutate_fun = periodReturn,
+          period = 'daily',
+          type = 'arithmetic',
+          col_rename = 'future_return') %>%
+  mutate(future_return_sign = ifelse(prophet_forecasts$price > lag(prophet_forecasts$price),
+                                     1, 0)
+  ) %>%
+  filter(date >= "2020-07-01")
+
+# Merge test data and prophet prediction signal
+test_and_prophet <- 
+  bitcoin_price_test_returns %>%
+  bind_cols(select(prophet_forecasts_sign, "pred_signal")) %>%
+  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
+         return_buyhold = cumprod(1 + future_return),
+         return_prophet = cumprod(1 + future_return * pred_signal - trading_cost))
+
+# Visualisation of prophet strategy vs buy-and-hold strategy
+test_and_prophet %>% 
+  select(date, return_buyhold, return_prophet) %>% 
+  gather(key = "strategy", value = "returns", -date) %>% 
+  ggplot(aes(x=date, y = returns)) +
+    geom_line(aes(color = strategy)) +
+    theme_light()
+```
+
 

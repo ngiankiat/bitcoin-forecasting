@@ -113,12 +113,22 @@ volatile_days = bitcoin_price %>%
          percentage_change = (weighted_price - lag_weighted_price)/weighted_price) %>%
   filter(weighted_price > 300) %>%
   arrange(percentage_change) %>%
-  filter(row_number() %in% c(1:50)) %>%
+  filter(row_number() %in% c(1:50, 2235:2284)) %>%
   mutate(nature = ifelse(percentage_change > 0, "growth", "fall"))
 
 # Plot volatility on timeline
 ggplot(volatile_days, aes(x=date, fill=nature)) + 
   geom_histogram( binwidth = 10)
+
+volatile_months = volatile_days %>%
+  mutate(month = format(as.Date(date), "%Y-%m")) %>%
+  select(month, nature, percentage_change) %>%
+  mutate(up = ifelse(nature == "growth", 1, 0), down = ifelse(nature == "fall", 1, 0)) %>%
+  group_by(month) %>%
+  summarize(up = sum(up), down = sum(down)) %>%
+  mutate(status = ifelse(up == 0, "bad", ifelse(down == 0, "good", "volatile"))) %>%
+  arrange(month)
+
 ```
 
 ```{r}
@@ -129,25 +139,19 @@ volatile_days %>%
 volatile_days_date = volatile_days$date
 ```
 
-# Experiment with Reddit Data Pipeline
+# 2. Experiment with Reddit Data Pipeline
 
 ```{r}
 reddit_crypto <- reddit_urls(
-  search_terms   = "Cryptocurrency",
+  search_terms   = "bitcoin fall 2020-03-12",
   page_threshold = 10
 )
 
-reddit_bitcoin <- reddit_urls(
-  search_terms   = "Bitcoin",
-  page_threshold = 10
-)
-
-bitcoin_reddit %>% 
-  mutate(date = as.Date(date, "%d-%m-%y")) %>%
-  filter(date %in% volatile_days_date)
+reddit_crypto %>% 
+  mutate(date = as.Date(date, "%d-%m-%y"))
 ```
 
-# News Data Pipeline
+# 3. News Data Pipeline
 
 ```{r, include = FALSE}
 library(xml2)
@@ -251,7 +255,7 @@ crypto_news = as.data.frame(crypto_news)
 crypto_news
 ```
 
-# NLP Text Processing
+# 4. NLP Text Processing
 
 ```{r}
 library(tidytext)
@@ -313,10 +317,135 @@ crypto_news.bigrams = crypto_news.bigrams %>%
 crypto_news.bigrams
 ```
 
+# 5. Scrape Massive Historical Dataset - Takes Around One Hour to Run
 
+```{r}
+crypto_massive = matrix(nrow = 0, ncol = 4)
+colnames(crypto_massive) = c("scrape.time", "heading", "paragraph", "article.date")
 
+# Scrape investing.com/news/cryptocurrency-news/
+for(i in 1:1800) {
+  url = paste0("https://www.investing.com/news/cryptocurrency-news/", i)
+  data <- read_html(url)
 
+  data.headings = data %>%
+    html_nodes( "#leftColumn .title") %>%
+    html_text()
 
+  data.paragraphs = data %>%
+    html_nodes( "#leftColumn p") %>%
+    html_text()
+
+  data.date = data %>%
+    html_nodes( "#leftColumn .date") %>%
+    html_text()
+  # The fourth item is always an ad with no date
+  data.date = append(data.date, NA, 3)
+
+  temp_matrix = matrix(nrow = length(data.headings), ncol = 4)
+  temp_matrix[,1] = as.character(Sys.time())
+  temp_matrix[,2] = data.headings
+  temp_matrix[,3] = data.paragraphs
+  temp_matrix[,4] = data.date 
+
+  crypto_massive = rbind(crypto_massive, temp_matrix)
+  print(i)
+  closeAllConnections()
+}
+
+crypto_massive_copy = crypto_massive 
+
+# Convert into Dataframe and Clean Data
+crypto_massive = as.data.frame(crypto_massive)
+crypto_massive = crypto_massive %>% filter(!is.na(article.date))
+crypto_massive$article.date = substring(crypto_massive$article.date, 4)
+for(i in 1:200){
+  crypto_massive$article.date[i] = ifelse(grepl("ago", crypto_massive$article.date[i]), "Dec 02, 2020",
+                                          crypto_massive$article.date[i])
+}
+crypto_massive$article.date = as.Date(crypto_massive$article.date, "%b %d, %Y")
+  
+crypto_massive
+```
+
+```{r}
+# Combine Title and Paragraph
+crypto_massive$full.text = paste0(crypto_massive$heading, " ", crypto_massive$paragraph)
+
+# Tokenize Text
+crypto_massive.token = crypto_massive %>%
+  select(full.text) %>%
+  unnest_tokens(word, full.text) %>%
+  group_by(word) %>%
+  summarize(n_tokens = n()) %>%
+  arrange(desc(n_tokens))
+
+crypto_massive.token
+```
+
+```{r}
+# Process Stopwords
+stopwords_sw_iso = stopwords::stopwords(language = 'en',source='stopwords-iso')
+
+# Exlude Some Stopwords
+excludefromstopwords <- c("high", "new", "up", "above", "back", "below", "big", "higher", "world", "down", "index", "interest", "billion", "early", "under", "changes", "highest", "lower", "lowest", "million", "states", "value", "microsoft", "website", "bottom", "best")
+stopwords_sw_iso <- stopwords_sw_iso[!stopwords_sw_iso %in% excludefromstopwords]
+
+# Include Some Stopwords
+extra_stop_words <- c("day", "investing.com", "2.0", "2020")
+
+# Include Some Stopwords
+stop_words = data.frame(word=unique(c(stopwords_sw_iso,extra_stop_words)),stringsAsFactors = F)
+stop_words = stop_words %>% mutate(stopword=1)
+
+# Process Stopwords
+crypto_massive.token = crypto_massive.token %>% 
+  left_join(y=stop_words, by= "word", match = "all") %>%
+  filter(is.na(stopword))
+
+crypto_massive.token
+```
+
+```{r}
+# Tokenize Text
+crypto_massive.bigrams =  crypto_massive %>% 
+  select(full.text) %>%
+  unnest_tokens(bigram, token = "ngrams", n = 2, full.text)
+
+# Remove Bigrams Containing Stopwords
+crypto_massive.bigrams = crypto_massive.bigrams %>%
+  separate(bigram, c('word1', 'word2'), sep=" ") %>%
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word) %>%
+  unite(bigram, word1, word2, sep = ' ') %>%
+  group_by(bigram) %>%
+  summarize(n_tokens = n()) %>%
+  arrange(desc(n_tokens))
+
+crypto_massive.bigrams
+```
+
+```{r}
+reddit_crypto <- reddit_urls(
+  search_terms   = "why did bitcoin fall on ",
+  page_threshold = 10
+)
+
+reddit_bitcoin <- reddit_urls(
+  search_terms   = "Bitcoin",
+  page_threshold = 10
+)
+
+bitcoin_reddit %>% 
+  mutate(date = as.Date(date, "%d-%m-%y")) %>%
+  filter(date %in% volatile_days_date)
+```
+
+```{r}
+  data = read_html("https://www.cnbc.com/2018/01/23/one-person-caused-bitcoin-to-spike-from-150-to-1000-in-2013.html")
+
+  # Scrape Headings
+  html_text(html_nodes(data, "p"))
+```
 
 
 
