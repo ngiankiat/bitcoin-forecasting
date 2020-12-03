@@ -674,7 +674,7 @@ https://blog.shrimpy.io/blog/cryptocurrency-index-funds-step-by-step-guide
 
 Another way to get a comparison of how any particular crypto is moving relative to the crypto market is to build an index to compare it to. An index will also be able to show trends and changes in investing patterns.
 
-We have created a simple crypto index based on weighted market cap of top 10 crypto. 
+We have created a simple crypto index based on weighted market cap of top 10 crypto. (Market capitalization-weighted). Using an index, an investor can see a mood of the market and can make informed decisions.
 
 * Firstly, Asset selection: 
 
@@ -698,7 +698,7 @@ We have created a simple crypto index based on weighted market cap of top 10 cry
     + There are a few ways we can do this: Market cap Weighted, Square Root Market Cap Weighted, Evenly Weighted, Minimum Weight, Maximum Weight. 
     + We will not use market cap weighted because crypto such as Bitcoin has a significantly higher market cap than any other crypto in the index so the index will not be good if Bitcoin has a much significant higher weightage. Instead, we will use square root market cap weighted to have better diversification of the weights of the 10 crypto in this index. 
     + Further improvement in future could be looking at setting a min weight for those rank 8-10, or setting a max weight to Bitcoin.
-    + Continuous improvement of this index will be necessary. Currently, it will just serve as a benchmark for comparison.
+    + Continuous improvement of this index (such as rebalancing) will be necessary. Currently, it will just serve as a benchmark for comparison.
 
 ```{r}
 
@@ -715,8 +715,8 @@ top10_crypto_df <- top10_crypto_df %>% group_by(date)
 # when take sqrt (the weightage of each crypto in the top10 mix will be more acceptable)
 # e.g. 2018-01-01: BTC - 28.4%, ETH - 16.2%, XRP - 18.1%, USDT - 2.2%, LTC - 6.6%, BCH - 12.0%, LINK - 0.9%, ADA - 8.1%, BNB - 1.7%, XLM - 5.5%. Compared to if merely based on market cap, bitcoin would have a proportion of 70%. 
 
-#lets assume the base of this index is 10000, so the
-divisor = subset(mkt_cap_total, date == "2018-01-01")$sqrt_sum_mkt_cap/10000
+#lets assume the base of this index is 100, so the
+divisor = subset(mkt_cap_total, date == "2018-01-01")$sqrt_sum_mkt_cap/100
 mkt_cap_total <- mkt_cap_total %>% mutate(index = sqrt_sum_mkt_cap/divisor)
 
 
@@ -727,11 +727,19 @@ crypto_index <- mkt_cap_total %>% tq_mutate(select = index,
             col_rename = 'crypto_index_return')
 
 # we will just add the returns of index into the model
-crypto_index_df <- select(crypto_index, c(date,crypto_index_return))
+crypto_index_df <- select(crypto_index, c(date,crypto_index, crypto_index_return))
 
 bitcoin_model <- bitcoin_model %>% left_join(crypto_index_df)
 
 ```
+```{r}
+cmc_crypto_index <- get_yahoo('^CMC200') %>%
+  select(date, cmc_crypto_index = adjusted_close)
+bitcoin_model <- bitcoin_model %>% left_join(cmc_crypto_index)
+
+
+```
+
 
 ### Adjusting missing values for some features
 
@@ -961,8 +969,15 @@ ggplot(bitcoin_model)  +
 ```
 
 ```{r}
-ggplot(mkt_cap_total, aes(x = date)) + 
-  geom_line(aes(y = index), colour = "blue", alpha = 0.8)
+ggplot(bitcoin_model, aes(x = date)) + 
+  geom_line(aes(y = future_return), colour = "blue", alpha = 0.8) +
+  geom_line(aes(y = crypto_index_return), colour = "red", alpha = 0.6)
+
+ggplot(bitcoin_model, aes(x = date)) + 
+  geom_line(aes(y = crypto_index_return), colour = "red", alpha = 0.8)
+
+
+ggplot(crypto_index,aes(x=date))+ geom_line(aes(y = index))
 ```
 
 
