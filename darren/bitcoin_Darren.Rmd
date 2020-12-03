@@ -1,31 +1,49 @@
 ---
-title: "Feature Engineering - NLP for Reddit Data"
-author: "Darren"
+title: 'Bitcoin Feature Engineering - NLP of Reddit Comments'
+author: "Darren Tan Jing Rong"
 date: "`r Sys.Date()`"
 output:
   html_document:
-    code_folding: show
-    number_sections: no
+    #code_folding: show
+    #by default want to show the code without option to hide
+    number_sections: no #change from yes to no
     toc: yes
-    toc_depth: 4
+    toc_depth: 3
     toc_float:
       collapsed: yes
       smooth_scroll: no
-editor_options:
-  chunk_output_type: console
+#editor_options:
+  #chunk_output_type: console
 ---
-# 1. Load Packages
 
-```{r setup, include = FALSE}
+```{r setup, include=FALSE}
+#
+rm(list = ls())
+
+# knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 knitr::opts_chunk$set(
-  collapse = FALSE,
-  comment = "#",
-  message = FALSE,
-  warning = FALSE,
-  cache = FALSE,
+  collapse=TRUE,
+  comment="#",
+  message=FALSE,
+  warning=FALSE,
+  cache=FALSE,
   fig.align = "center",
-  class.source = 'white'
+  results="hold"
 )
+
+path_root="."
+```
+
+```{r, include=FALSE}
+# Function for colouring our text in Rmarkdown
+colorize <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{%s}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'>%s</span>", color, 
+      x)
+  } else x
+}
 ```
 
 ```{r}
@@ -46,8 +64,6 @@ library(caret)
 library(mlbench)
 ```
 
-`r colorize("XXX", "blue")`
-
 `r colorize("One of our feature engineering additions is to webscrape Reddit data for chatter about bitcoin.", "blue")`
 `r colorize("This complements our scraping of technical data and news as reddit chatter measures sentiment and we can see the level of interest through performing sentiment analysis on the comments", "blue")`
 
@@ -56,7 +72,7 @@ library(mlbench)
 `r colorize("Parameters have been slightly adjusted. The main search term is bitcoin", "blue")`
 
 
-```{r, echo = FALSE}
+```{r}
 
 library(RedditExtractoR)
 
@@ -68,8 +84,14 @@ bitcoin_nlp = get_reddit(search_terms = 'bitcoin', regex_filter = "", subreddit 
 
 `r colorize("The function outputs a dataframe, but has unecessary columns like the URL and the date of the post. We only require the date of the comment and the comment itself, so we use subset to extract these two columns", "blue")`
 
+```{r}
 
-```{r, echo = FALSE}
+colnames(bitcoin_nlp)
+head(bitcoin_nlp)
+
+```
+
+```{r}
 dfnlp = subset(bitcoin_nlp, select = c(comm_date, comment) )
 
 #write.csv(dfnlp,"C:\\Users\\Darren\\Desktop\\bitcointext.csv", row.names = FALSE)
@@ -79,7 +101,7 @@ head(dfnlp)
 
 `r colorize("The date column was not in datetime format, so we use the lubridate library to change it to datetime format", "blue")`
 
-```{r, echo = FALSE}
+```{r}
 library(lubridate)
 
 date <- dmy(dfnlp$comm_date)
@@ -94,9 +116,9 @@ head(dfnlp3)
 
 ```
 
-`r colorize("The dataset goes all the way back to 2013. We only require 2018 onwards dataset - this is standardised across our features for our model so we just subset the portion we need", "blue")`
+`r colorize("The dataset goes all the way back to 2013. We only require 2018 onwards - this is standardised across our features for our model so we just subset the portion we need", "blue")`
 
-```{r, echo = FALSE}
+```{r}
 
 dfnlp4 <- subset(dfnlp3, date > "2018-01-01") 
 
@@ -121,18 +143,17 @@ reddit_token <- dfnlp5 %>%
   summarize(n_tokens = n()) %>%
   arrange(desc(n_tokens))
 
-reddit_token
+head(reddit_token)
 ```
 
 `r colorize("Here we just unnest the comments column and obtain individual words", "blue")`
-
 
 ```{r}
 #unnnest comment column but keep date
 reddit_token <- dfnlp5 %>%
   unnest_tokens(word, comment)
 
-reddit_token
+head(reddit_token)
 ```
 
 `r colorize("The next step is to remove stopwords from the tokenized dataset. We use stopwords-iso but can include and exclude stopwords as we require. Using left_join we then obtain a dataset with stopwords removed", "blue")`
@@ -152,7 +173,7 @@ stop_words = stop_words %>% mutate(stopword=1)
 reddit_token = reddit_token %>% 
   left_join(y=stop_words, by= "word", match = "all") %>%
   filter(is.na(stopword))
-reddit_token
+head(reddit_token)
 
 ```
 
@@ -170,7 +191,7 @@ reddit_token %>%
   spread(sentiment, n, fill=0) %>% 
   mutate(sentiment=positive-negative)
 
-sentiment_score
+head(sentiment_score)
 
 ```
 
@@ -186,7 +207,7 @@ sentiment_score %>%
 
 sentiment_score[is.na(sentiment_score)] <- 0
 
-sentiment_score
+head(sentiment_score)
 
 ```
 
@@ -198,7 +219,7 @@ sentiment_score <- sentiment_score %>% rename(reddit_overall_sentiment = sentime
 sentiment_score <- sentiment_score %>% rename(reddit_negative_sentiment = negative) 
 sentiment_score <- sentiment_score %>% rename(reddit_positive_sentiment = positive) 
 
-sentiment_score
+head(sentiment_score)
 ```
 
 ```{r}
@@ -208,6 +229,8 @@ DT::datatable()
 ```
 
 ```{r}
+#export results as csv
+write.csv(sentiment_score,"C:\\Users\\Darren\\Desktop\\bitcoin_reddit.csv", row.names = FALSE)
 
 ```
 
