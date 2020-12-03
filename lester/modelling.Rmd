@@ -315,44 +315,44 @@ xgb_final_testing_pred %>%
 
 
 # 14. Evaluating Model
-## 14.1 Computing Returns
+## 14.1 Computing Returns from the Model.  
+Strategy 1: Buy and Hold  
+Strategy 2: Using the model's predicted signal to buy/sell at the closing price  
 ```{r}
 # Train and Test set predictions
 # Using the model that was trained with all the training data and fitting onto the entire dataset
 xgb_final_full_pred <- bitcoin_model %>% 
-  select(date, future_return_sign, future_return) %>% 
+  select(date, close, future_return_sign, future_return) %>% 
   # Add in predicted
+  bind_cols(predict(xgb_final, bitcoin_model, type = "prob")) %>% 
   bind_cols(predict(xgb_final, bitcoin_model)) %>% 
   rename(pred_signal = .pred_class) %>% 
-  mutate_at("pred_signal", ~as.numeric(as.character(.))) %>%
-  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003)
-
-# Get accuracy from predicting using testing set
-xgb_final_full_pred %>%
-  accuracy(truth = future_return_sign, pred_class)
+  mutate_at("pred_signal", ~as.numeric(as.character(.))) %>%  # Convert factor to binary integer
+  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
+         return_buyhold = cumprod(1 + future_return),
+         return_model = cumprod(1 + future_return * pred_signal - trading_cost))
 ```
 
-
+## 14.2 Visualisations
 ```{r}
-# Bertram's Way
-# From resampling results
-resample_predictions <- xgb_resampling %>%
-  # Access the test data from splits and store as new column
-  mutate(.testing = map(splits, testing)) %>%
-  select(id, .predictions, .testing) %>%
-  # names_repair make column names unique
-  unnest(c(.predictions, .testing), names_repair = "universal")
+# Plot predicted buy/sell signal on price data
+xgb_final_full_pred %>% 
+  ggplot(aes(x = date, y = close, color = pred_signal)) + 
+    geom_line() +
+    theme_light()
 
-# Signal
-signal <- resample_predictions %>%
-  select(- c(future_return_sign...63, .pred_0)) %>%
-  rename(future_return_pred = .pred_1,
-         future_return_sign = future_return_sign...6) %>%
-  arrange(date) %>%
-  mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
-         trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
-         return_buyhold = cumprod(1 + close_change_1d),
-         return_model = cumprod(1 + close_change_1d * signal - trading_cost))
+# Comparing buyhold v model returns
+xgb_final_full_pred %>% 
+  select(date, return_buyhold, return_model) %>% 
+  gather(key = "strategy", value = "returns", -date) %>% 
+  ggplot(aes(x=date, y = returns)) +
+    geom_line(aes(color = strategy)) +
+    theme_light()
 ```
 
-## 14.2 
+## 14.3 Descriptive Statistics
+```{r}
+# Confusion Matrix
+
+```
+
