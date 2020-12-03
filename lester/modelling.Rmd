@@ -1,5 +1,6 @@
 ---
 title: "Modelling with TidyModels"
+author: "Lester Sim"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -67,16 +68,18 @@ bitcoin_price <- bitcoin_price %>%
 
 # Defining Target
 bitcoin_model <- bitcoin_price %>%
+  select(date, close, volume_btc, volume_currency) %>% 
   tq_mutate(select = close,
             mutate_fun = periodReturn,
             period = 'daily',
             type = 'arithmetic',
             col_rename = 'future_return') %>%
-  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)),
-         close = lag(close, 1),
-         date = date - days(1)) %>%
-  select(date, close, future_return, future_return_sign)
-bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>% 
+  # Shift up future_returns and sign by 1. Use today's data to predict tomorrow's returns.
+  # future_returns indicates the returns if I buy at today's close and sell at tmrrw's close
+  # each row represent today
+  mutate_at(c("future_return", "future_return_sign"), lead)
+bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
 
 rmarkdown::paged_table(bitcoin_model %>% head())
 ```
@@ -144,9 +147,9 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 # 3. Train/Test Data Split
 ```{r}
 set.seed(123)
-
-train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2019-12-31")))
-test <- bitcoin_model %>% filter(between(date, as.Date("2020-01-01"), as.Date("2020-11-29")))
+# YMD format
+train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
+test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-29")))
 ```
 
 # 4. Create Recipe
@@ -174,7 +177,6 @@ resamples_cv <- recipe_spec %>%
 resamples_cv %>% 
   plot_time_series_cv_plan(
         date, close, # date variable and value variable
-        # Additional arguments passed to plot_time_series(),
         .facet_ncol = 2,
         .line_alpha = 0.5,
         .interactive = FALSE
@@ -204,14 +206,15 @@ xgb_wflw <- workflow() %>%
 xgb_wflw
 ```
 
-# 8. Create grid for tuning.
+# 8. Tuning
+## 8.1 Create grid for tuning.
 ```{r}
 # Create grid. Create 10 models.
 xgb_params <- grid_max_entropy(trees(), size = 10)
 xgb_params
 ```
 
-# 9. Model Tuning with a Grid
+## 8.2 Model Tuning with a Grid
 ```{r}
 # Fit models at all different values chosen for each hyperparameter
 # 7 Folds. Results reported for each row.
@@ -238,7 +241,7 @@ best_params <- xgb_model_trained %>%
   select_best('mn_log_loss', maximise = FALSE)
 ```
 
-# 10. Finalize workflow with the best model parameters
+# 9. Finalize workflow with the best model parameters
 ```{r}
 xgb_wflw_best <- xgb_wflw %>% 
   finalize_workflow(best_params)
@@ -252,7 +255,7 @@ xgb_final <-
   xgb_wflw_best %>%
   fit(data = train)
 
-xgb_final
+print(xgb_final)
 
 # Training set predictions
 xgb_final_training_pred <- 
@@ -311,22 +314,45 @@ xgb_final_testing_pred %>%
 ```
 
 
-# 14. Comparing returns to benchmark (Bertram)
+# 14. Evaluating Model
+## 14.1 Computing Returns
 ```{r}
+# Train and Test set predictions
+# Using the model that was trained with all the training data and fitting onto the entire dataset
+xgb_final_full_pred <- bitcoin_model %>% 
+  select(date, future_return_sign, future_return) %>% 
+  # Add in predicted
+  bind_cols(predict(xgb_final, bitcoin_model)) %>% 
+  rename(pred_signal = .pred_class) %>% 
+  mutate_at("pred_signal", ~as.numeric(as.character(.))) %>%
+  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003)
 
-# resample_predictions <- xgb_resampling %>%
-#   mutate(.testing = map(splits, testing)) %>%
-#   select(id, .predictions, .testing) %>%
-#   unnest(c(.predictions, .testing), names_repair = "universal")
-# 
-# signal <- resample_predictions %>%
-#   select(- c(future_return_sign...208, .pred_0)) %>%
-#   rename(future_return_pred = .pred_1,
-#          future_return_sign = future_return_sign...6) %>%
-#   arrange(date) %>%
-#   mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
-#          trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
-#          return_buyhold = cumprod(1 + close_change_1d),
-#          return_model = cumprod(1 + close_change_1d * signal - trading_cost))
+# Get accuracy from predicting using testing set
+xgb_final_full_pred %>%
+  accuracy(truth = future_return_sign, pred_class)
 ```
 
+
+```{r}
+# Bertram's Way
+# From resampling results
+resample_predictions <- xgb_resampling %>%
+  # Access the test data from splits and store as new column
+  mutate(.testing = map(splits, testing)) %>%
+  select(id, .predictions, .testing) %>%
+  # names_repair make column names unique
+  unnest(c(.predictions, .testing), names_repair = "universal")
+
+# Signal
+signal <- resample_predictions %>%
+  select(- c(future_return_sign...63, .pred_0)) %>%
+  rename(future_return_pred = .pred_1,
+         future_return_sign = future_return_sign...6) %>%
+  arrange(date) %>%
+  mutate(signal = ifelse(lag(future_return_pred, n = 1, default = 1) > 0.50, 1, 0),
+         trading_cost = abs(signal - lag(signal, n = 1, default = 0)) * 0.003,
+         return_buyhold = cumprod(1 + close_change_1d),
+         return_model = cumprod(1 + close_change_1d * signal - trading_cost))
+```
+
+## 14.2 
