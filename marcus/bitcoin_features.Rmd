@@ -618,7 +618,7 @@ for (i in 1:nrow(dates)) {
 
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Download Google Trends Monthly Data
 monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>% 
   rename(hits_monthly = hits)
@@ -627,10 +627,8 @@ monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>%
 monthly$hits_monthly[monthly$hits_monthly=="<1"]<- "1"
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Rebase
-# load in the rda for this
-
 bitcoin_google <- list.files('google-trend-daily') %>%
   map_df(~ read_csv(file.path('google-trend-daily', str_c(.)), col_types = c('Di'))) %>%
   rename(hits_daily = hits) %>%
@@ -642,6 +640,8 @@ bitcoin_google <- list.files('google-trend-daily') %>%
 ```
 
 ```{r}
+# load in the google trends already prepared previously instead of running the above 3 chunks
+# then add to model
 bitcoin_model <- bitcoin_model %>% 
   left_join(bitcoin_google)
 
