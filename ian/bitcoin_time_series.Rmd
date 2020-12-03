@@ -403,3 +403,13 @@ test_and_prophet %>%
 ```
 
 
+# 6. Export Prophet Predictions
+
+```{r}
+# Export date and prophet forecast signals
+prophet_forecasts_sign %>%
+  select(date, pred_signal) %>%
+  rename(prophet_pred_signal = pred_signal) %>%
+  write.csv(file="../data/prophet_signals.csv")
+```
+
