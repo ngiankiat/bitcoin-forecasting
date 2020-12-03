@@ -38,6 +38,7 @@ library(tidyquant)  # Functions for collecting and analyzing financial data
 library(timetk)  # Functions to visualize, wrangle, and feature engineer time series data for forecasting and machine learning prediction
 library(xgboost) # Machine learning algos
 library(vip) # For constructing variable importance plots
+library(caret) # Confusion matrix
 ```
 
 ```{r}
@@ -353,6 +354,7 @@ xgb_final_full_pred %>%
 ## 14.3 Descriptive Statistics
 ```{r}
 # Confusion Matrix
-
+confusionMatrix(factor(xgb_final_full_pred$pred_signal),
+                factor(xgb_final_full_pred$future_return_sign))
 ```
 
