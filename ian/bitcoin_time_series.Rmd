@@ -1,6 +1,6 @@
 ---
-title: "Bitcoin Momentum Feature Based Forecasting"
-author: "Nico"
+title: "Bitcoin Time Series Forecasting"
+author: "Ian"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -405,7 +405,9 @@ test_and_prophet %>%
 
 # 6. Export Prophet Predictions
 
-```{r}
+Export the prophet prediction signals to be compared with the predictions of other models.
+
+```{r export}
 # Export date and prophet forecast signals
 prophet_forecasts_sign %>%
   select(date, pred_signal) %>%
