@@ -24,7 +24,8 @@ knitr::opts_chunk$set(
   warning = FALSE,
   cache = FALSE,
   fig.align = "center",
-  class.source = 'white'
+  class.source = 'white',
+  options(scipen=999) # suppress scientific notation
 )
 ```
 
@@ -348,6 +349,15 @@ prophet_forecasts <-
 prophet_forecasts <-
     rbind(tail(bitcoin_price_train_tbl, 1),
           prophet_forecasts)
+
+# Compute daily returns using tq_mutate
+prophet_forecasts <- 
+    prophet_forecasts %>%
+    tq_mutate(select = price,
+              mutate_fun = periodReturn,
+              period = 'daily',
+              type = 'arithmetic',
+              col_rename = 'future_return')
 
 # New column that contains 1 if Bitcoin prices increase, 0 otherwise
 prophet_forecasts_sign <-
