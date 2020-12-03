@@ -1,6 +1,6 @@
 ---
-title: "Bitcoin Momentum Feature Based Forecasting"
-author: "Nico"
+title: "Feature Engineering - NLP for Reddit Data"
+author: "Darren"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -46,30 +46,15 @@ library(caret)
 library(mlbench)
 ```
 
-#2.5 NLP for Reddit Threads & Data Manipulation
+`r colorize("XXX", "blue")`
 
-```{r, echo = FALSE}
-#code for scraping reddit threads for bitcoin-related data, for sentiment analysis
-library(RedditExtractoR)
-bitcoin_urls = reddit_urls(search_terms="bitcoin")
+`r colorize("One of our feature engineering additions is to webscrape Reddit data for chatter about bitcoin.", "blue")`
+`r colorize("This complements our scraping of technical data and news as reddit chatter measures sentiment and we can see the level of interest through performing sentiment analysis on the comments", "blue")`
 
-bitcoin_urls
-```
+`r colorize("The first step is to use the RedditExtractoR library's get_reddit command to scrape for all bitcoin related threads and comments", "blue")`
+`r colorize("The function get_reddit combines both reddit_urls, used to extract URLs of Reddit threads, and reddit_content, used to extract comments from the threads identified using reddit_urls", "blue")`
+`r colorize("Parameters have been slightly adjusted. The main search term is bitcoin", "blue")`
 
-```{r, echo = FALSE}
-#obtain stock price for Grayscale Bitcoin Trust (BTC), the only fund of its kind for Bitcoin especially
-#dates can be changed (, from = '2017-01-01', to = "2018-03-01")
-library(tidyquant)
-
-options("getSymbols.warning4.0"=FALSE)
-options("getSymbols.yahoo.warning"=FALSE)
-
-getSymbols("GBTC",warnings = FALSE,
-           auto.assign = TRUE)
-
-head(GBTC)
-chart_Series(GBTC)
-```
 
 ```{r, echo = FALSE}
 
@@ -79,9 +64,10 @@ bitcoin_nlp = get_reddit(search_terms = 'bitcoin', regex_filter = "", subreddit 
   cn_threshold = 1, page_threshold = 10, sort_by = "comments",
   wait_time = 2)
 
-
-
 ```
+
+`r colorize("The function outputs a dataframe, but has unecessary columns like the URL and the date of the post. We only require the date of the comment and the comment itself, so we use subset to extract these two columns", "blue")`
+
 
 ```{r, echo = FALSE}
 dfnlp = subset(bitcoin_nlp, select = c(comm_date, comment) )
@@ -90,6 +76,8 @@ dfnlp = subset(bitcoin_nlp, select = c(comm_date, comment) )
 
 head(dfnlp)
 ```
+
+`r colorize("The date column was not in datetime format, so we use the lubridate library to change it to datetime format", "blue")`
 
 ```{r, echo = FALSE}
 library(lubridate)
@@ -106,6 +94,8 @@ head(dfnlp3)
 
 ```
 
+`r colorize("The dataset goes all the way back to 2013. We only require 2018 onwards dataset - this is standardised across our features for our model so we just subset the portion we need", "blue")`
+
 ```{r, echo = FALSE}
 
 dfnlp4 <- subset(dfnlp3, date > "2018-01-01") 
@@ -115,6 +105,8 @@ dfnlp5 <- dfnlp4[order(as.Date(dfnlp4$date, format="%d/%m/%Y")),]
 head(dfnlp5)
 
 ```
+
+`r colorize("Here we are starting to do NLP. The first step is to get an overview of the tokens", "blue")`
 
 ```{r}
 library(tidytext)
@@ -132,6 +124,9 @@ reddit_token <- dfnlp5 %>%
 reddit_token
 ```
 
+`r colorize("Here we just unnest the comments column and obtain individual words", "blue")`
+
+
 ```{r}
 #unnnest comment column but keep date
 reddit_token <- dfnlp5 %>%
@@ -139,6 +134,8 @@ reddit_token <- dfnlp5 %>%
 
 reddit_token
 ```
+
+`r colorize("The next step is to remove stopwords from the tokenized dataset. We use stopwords-iso but can include and exclude stopwords as we require. Using left_join we then obtain a dataset with stopwords removed", "blue")`
 
 ```{r}
 # Process Stopwords
@@ -159,6 +156,9 @@ reddit_token
 
 ```
 
+`r colorize("Here we obtain a sentiment score using the bing lexicon, which gives us a sentiment by counting positive and negative words for each day and taking the difference to give a sentiment score", "blue")`
+
+`r colorize("However, the problem is that we still have days with no reddit chatter, resulting in gaps between the dates", "blue")`
 
 ```{r}
 #sentiment score - bing lexicon
@@ -174,22 +174,37 @@ sentiment_score
 
 ```
 
+`r colorize("We rectify the problem by using the complete function to fill in empty dates and then replacing all the NA values with 0", "blue")`
+`r colorize("This is because we want days with no bitcoin chatter to have 0 sentiment", "blue")`
+`r colorize("Now, the dataset is in a clean format for our model. All 3 columns can be used as features - negative, positive and overall sentiment", "blue")`
+
+
 ```{r}
-#viewing of score in viewer
+sentiment_score <-
+sentiment_score %>%
+  complete(date = seq.Date(as.Date("2018/1/1"), as.Date("2020/11/30"), by="day")) 
+
+sentiment_score[is.na(sentiment_score)] <- 0
+
+sentiment_score
+
+```
+
+`r colorize("Renamed the columns so it does not conflict with the news NLP section", "blue")`
+
+```{r}
+colnames(sentiment_score)
+sentiment_score <- sentiment_score %>% rename(reddit_overall_sentiment = sentiment) 
+sentiment_score <- sentiment_score %>% rename(reddit_negative_sentiment = negative) 
+sentiment_score <- sentiment_score %>% rename(reddit_positive_sentiment = positive) 
+
+sentiment_score
+```
+
+```{r}
+#just for viewing in data table
 sentiment_score %>%
 DT::datatable()
-```
-
-```{r}
-
-```
-
-```{r}
-
-```
-
-```{r}
-
 ```
 
 ```{r}
