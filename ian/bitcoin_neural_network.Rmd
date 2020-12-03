@@ -1,0 +1,102 @@
+---
+title: "Bitcoin Neural Network Forecasting"
+author: "Ian"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: no
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+editor_options:
+  chunk_output_type: inline
+---
+
+# 1. Load Packages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE,
+  comment = "#",
+  message = FALSE,
+  warning = FALSE,
+  cache = FALSE,
+  fig.align = "center",
+  class.source = 'white',
+  options(scipen=999) # suppress scientific notation
+)
+```
+
+```{r set dates}
+# Set dates for this project. YMD Format.
+sDate = "2018-01-01"
+eDate = "2020-11-30"
+```
+
+
+# 2. Extracting Data/Adding features
+
+## 2.1 Getting Bitcoin Prices
+```{r import Bitcoin prices}
+# Read Data
+bitcoin_price <- read_csv("../data/bitcoin_price.csv")
+
+# Cleaning
+bitcoin_price[bitcoin_price == 0] <- NA
+bitcoin_price <- bitcoin_price %>%
+  map_df(na.locf)
+
+# Defining Target
+bitcoin_model <- bitcoin_price %>%
+  select(date, close, volume_btc, volume_currency) %>% 
+  tq_mutate(select = close,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
+            col_rename = 'future_return') %>%
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>% 
+  # Shift up future_returns and sign by 1. Use today's data to predict tomorrow's returns.
+  # future_returns indicates the returns if I buy at today's close and sell at tmrrw's close
+  # each row represent today
+  mutate_at(c("future_return", "future_return_sign"), lead)
+bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
+
+rmarkdown::paged_table(bitcoin_model %>% head())
+```
+
+## 2.2 Getting Bitcoin Features
+
+```{r import Bitcoin features}
+# Importing features from Marcus
+bitcoin_features <- read_csv("../data/bitcoin_features.csv")
+bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove latest date to match bitcoin prices and future returns
+
+rmarkdown::paged_table(bitcoin_features %>% head())
+```
+
+## 2.3 Merge all data into 1 tibble
+
+```{r merge price with features}
+# Combine price data with features
+bitcoin_model <- bitcoin_model %>%
+  left_join(bitcoin_features, by="date")
+
+rmarkdown::paged_table(bitcoin_model %>% head())
+```
+
+## 2.4 Train/Test Data Split
+
+```{r train test split}
+set.seed(123)
+# YMD format
+train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
+test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-29")))
+```
+
+
+3. Neural Network
+
+3.1 
