@@ -109,14 +109,12 @@ bitcoin_price <- bitcoin_price %>% map_df(na.locf)
 
 ### Define Target
 
-* The future return was changed to **log returns** instead of arithmetic returns. Arithmetic return has a positive bias. To eliminate this bias a log return is preferred. It removes this bias and puts all the numbers in a log plane, and in the process also normalizing the returns to log normal. 
-
 ```{r}
 bitcoin_model <- bitcoin_price %>%
   tq_mutate(select = close,
             mutate_fun = periodReturn,
             period = 'daily',
-            type = 'log',                            
+            type = 'arithmetic',                            
             col_rename = 'future_return') %>%
   mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)),
          close = lag(close, 1),
@@ -582,7 +580,7 @@ bitcoin_model <- bitcoin_model %>% left_join(bitcoin_data_df)
 ```
 
 ### **Google Trends**
-```{r}
+```{r,eval=FALSE}
 # Scrape Google Data
 download_all <- FALSE
 if (download_all == TRUE) {
@@ -717,29 +715,21 @@ top10_crypto_df <- top10_crypto_df %>% group_by(date)
 
 #lets assume the base of this index is 100, so the
 divisor = subset(mkt_cap_total, date == "2018-01-01")$sqrt_sum_mkt_cap/100
-mkt_cap_total <- mkt_cap_total %>% mutate(index = sqrt_sum_mkt_cap/divisor)
+mkt_cap_total <- mkt_cap_total %>% mutate(crypto_index = sqrt_sum_mkt_cap/divisor)
 
 
-crypto_index <- mkt_cap_total %>% tq_mutate(select = index,
+crypto_index <- mkt_cap_total %>% tq_mutate(select = crypto_index,
             mutate_fun = periodReturn,
             period = 'daily',
             type = 'log',                            
             col_rename = 'crypto_index_return')
 
 # we will just add the returns of index into the model
-crypto_index_df <- select(crypto_index, c(date,crypto_index, crypto_index_return))
+crypto_index_df <- select(crypto_index, c("date","crypto_index", "crypto_index_return"))
 
 bitcoin_model <- bitcoin_model %>% left_join(crypto_index_df)
 
 ```
-```{r}
-cmc_crypto_index <- get_yahoo('^CMC200') %>%
-  select(date, cmc_crypto_index = adjusted_close)
-bitcoin_model <- bitcoin_model %>% left_join(cmc_crypto_index)
-
-
-```
-
 
 ### Adjusting missing values for some features
 
@@ -775,7 +765,7 @@ bitcoin_model <- bitcoin_model %>% fill(hits_monthly,.direction = "down")
 ```
 
 
-Using data from 2013 Oct onwards
+Using data from 2018 onwards
 ```{r}
 bitcoin_model <- subset(bitcoin_model, date>= "2018-01-01" & date <= "2020-11-30")
 rmarkdown::paged_table(bitcoin_model)
@@ -980,7 +970,20 @@ ggplot(bitcoin_model, aes(x = date)) +
 ggplot(crypto_index,aes(x=date))+ geom_line(aes(y = index))
 ```
 
+ROC states that whenever the Rate of Change goes above zero line from below, it states a positive momentum while when the ROC goes below zero line from above; it generates a negative momentum in the price.
 
+```{r}
+plota <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = roc_14, colour = "ROC_14days")) + 
+  scale_colour_manual(values = c("steelblue"))
+plotb <- ggplot(bitcoin_model, aes(x = date)) + geom_line(aes(y = roc_90, colour = "ROC_90days")) +
+  scale_colour_manual(values = c("darkred"))
+plotc <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = roc_200, colour = "ROC_200days")) +
+  scale_colour_manual(values = c("green"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plota), ggplotGrob(plotb), ggplotGrob(plotc), size = "last"))
+
+```
 
 
 
