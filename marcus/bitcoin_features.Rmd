@@ -31,18 +31,19 @@ title: "Bitcoin Additional Features"
 2. S&P500 Closing Price
 3. Gold (XAU/USD)
 4. US Dollar Index Price
+5. Created a Crypto Index
 
 A paper uses the following 3 below: [Link](https://arxiv.org/ftp/arxiv/papers/1706/1706.01437.pdf)
 
-4. Financial Stress Index
-5. AAII Sentiment - Is a weekly data, but since the bitcoin price is daily, i just fill the days with the week data, not sure if that's ok?
-6. CNY/USD 
+6. Financial Stress Index
+7. AAII Sentiment - Is a weekly data, but since the bitcoin price is daily, i just fill the days with the week data, not sure if that's ok?
+8. CNY/USD 
 
 Given: 
 
-7. Blockchain Indicators
-8. Bitcoin Drawdown
-9. Google Trends
+9. Blockchain Indicators
+10. Bitcoin Drawdown
+11. Google Trends
 
 
 # **Load Packages**
@@ -161,7 +162,6 @@ bitcoin_model$tweets_volume[is.na(bitcoin_model$tweets_volume)] <- 0 # Replace t
 ```{r}
 # create Bollinger Bands
 bitcoin_price_data <- bitcoin_price
-library(hablar)
 bitcoin_price_data <- bitcoin_price_data %>% 
   convert(num(open:weighted_price))
 bbands <- BBands(bitcoin_price_data[,c("high","low","close")]) #dn - The lower bollinger band, mavg - middle moving average, up - the upper bollinger band
@@ -618,7 +618,7 @@ for (i in 1:nrow(dates)) {
 
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Download Google Trends Monthly Data
 monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>% 
   rename(hits_monthly = hits)
@@ -627,7 +627,7 @@ monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>%
 monthly$hits_monthly[monthly$hits_monthly=="<1"]<- "1"
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Rebase
 bitcoin_google <- list.files('google-trend-daily') %>%
   map_df(~ read_csv(file.path('google-trend-daily', str_c(.)), col_types = c('Di'))) %>%
@@ -640,6 +640,8 @@ bitcoin_google <- list.files('google-trend-daily') %>%
 ```
 
 ```{r}
+# load in the google trends already prepared previously instead of running the above 3 chunks
+# then add to model
 bitcoin_model <- bitcoin_model %>% 
   left_join(bitcoin_google)
 
@@ -753,7 +755,6 @@ bitcoin_model <- select(bitcoin_model, -c(bchain.bcddc,bchain.bcdde,bchain.bcddm
 median_confirmation_time_bitcoin$date <- as.Date(median_confirmation_time_bitcoin$date, format="%d/%m/%Y" )
 colnames(median_confirmation_time_bitcoin) <- c("date", "bchain.atrct")
 bitcoin_model <- bitcoin_model %>% left_join(median_confirmation_time_bitcoin)
-
 
 # missing one value for bchain.naddu - Bitcoin Number of Unique Addresses Used: 23 May 2020
 ## number obtained from blockchain website: 588174
