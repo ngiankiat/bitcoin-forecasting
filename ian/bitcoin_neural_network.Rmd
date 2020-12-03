@@ -30,6 +30,12 @@ knitr::opts_chunk$set(
 )
 ```
 
+```{r load libraries}
+library(tidyverse)  # Data manipulation
+library(tidymodels) # Building machine learning workflows and models
+library(keras)      # neural networks
+```
+
 ```{r set dates}
 # Set dates for this project. YMD Format.
 sDate = "2018-01-01"
@@ -92,11 +98,48 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 ```{r train test split}
 set.seed(123)
 # YMD format
-train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
+train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2019-12-31")))
+validate <- bitcoin_model %>% filter(between(date, as.Date("2020-01-01"), as.Date("2020-06-30")))
 test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-29")))
 ```
 
 
-3. Neural Network
+# 3. Single Hidden Layer Neural Network
 
-3.1 
+Source: [Tidymodels - Classification Models Using a Neural Network](https://www.tidymodels.org/learn/models/parsnip-nnet/)
+
+## 3.1 Fitting the Neural Network
+
+```{r single hidden layer}
+bitcoin_rec <- 
+  recipe(future_return_sign ~ ., data = train) %>%
+  # feature engineering for date
+  step_date(date, features = c("dow", "month")) %>% 
+  step_rm(date) %>%
+  # transform predictors to be more symmetric
+  step_BoxCox(all_numeric()) %>%
+  # convert predictors to common scale
+  step_normalize(all_numeric()) %>%
+  prep(training = train, retain = TRUE)
+  
+# We will juice() to get the processed training set back
+
+# For validation:
+val_normalized <- bake(bitcoin_rec, new_data = validate, all_predictors())
+# For testing when we arrive at a final model: 
+test_normalized <- bake(bitcoin_rec, new_data = test, all_predictors())
+
+set.seed(123)
+
+nnet_fit <-
+  mlp(epochs = 100, hidden_units = 5, dropout = 0.1) %>%
+  set_mode("classification") %>% 
+  # Also set engine-specific `verbose` argument to prevent logging the results: 
+  set_engine("keras", verbose = 0) %>%
+  fit(future_return_sign ~ ., data = juice(bitcoin_rec))
+
+nnet_fit
+```
+
+# 3.2 Neural Network Model Performance
+
