@@ -228,7 +228,6 @@ xgb_model_trained <- xgb_wflw %>% tune_grid(
   resamples = resamples_cv,
   control = control_resamples(verbose = FALSE,
                               save_pred = TRUE,
-                              save_workflow = FALSE,
                               allow_par = TRUE))
 
 # Display results in a tidy tibble
