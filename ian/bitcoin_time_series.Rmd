@@ -357,7 +357,7 @@ prophet_forecasts <-
 # New column that contains 1 if Bitcoin prices increase, 0 otherwise
 prophet_forecasts_sign <-
     prophet_forecasts %>%
-    mutate(pred_signal = ifelse(prophet_forecasts$price > lag(prophet_forecasts$price), 
+    mutate(pred_signal = ifelse(lead(prophet_forecasts$price) > prophet_forecasts$price, 
                                        1, 0)
     ) %>%
     filter(date >= "2020-07-01")
@@ -384,9 +384,8 @@ bitcoin_price_test_returns <-
           period = 'daily',
           type = 'arithmetic',
           col_rename = 'future_return') %>%
-  mutate(future_return_sign = ifelse(prophet_forecasts$price > lag(prophet_forecasts$price),
-                                     1, 0)
-  ) %>%
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>%
+  mutate_at(c("future_return", "future_return_sign"), lead) %>%
   filter(date >= "2020-07-01")
 
 # Merge test data and prophet prediction signal
@@ -395,6 +394,12 @@ test_and_prophet <-
   bind_cols(select(prophet_forecasts_sign, "pred_signal")) %>%
   mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
          return_buyhold = cumprod(1 + future_return),
+         return_prophet = cumprod(1 + future_return * pred_signal - trading_cost))
+
+test_and_prophet <- 
+  base_model %>%
+  bind_cols(select(filter(prophet_forecasts_sign, date < "2020-11-30"), "pred_signal")) %>%
+  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
          return_prophet = cumprod(1 + future_return * pred_signal - trading_cost))
 
 # Visualisation of prophet strategy vs buy-and-hold strategy
@@ -411,11 +416,11 @@ test_and_prophet %>%
 
 Export the prophet prediction signals to be compared with the predictions of other models.
 
-```{r export}
+```{r export, eval = FALSE}
 # Export date and prophet forecast signals
 prophet_forecasts_sign %>%
   select(date, pred_signal) %>%
   rename(prophet_pred_signal = pred_signal) %>%
-  write.csv(file="../data/prophet_signals.csv")
+  write.csv(file="../data/prophet_signals.csv", row.names = FALSE)
 ```
 
