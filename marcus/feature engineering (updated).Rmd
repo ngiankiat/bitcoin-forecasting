@@ -895,6 +895,8 @@ bitcoin_model <- bitcoin_model %>% fill(aaii_bearish_sentiment,.direction = "up"
 * Chinese mining pools control more than 60% of the Bitcoin network’s collective hashrate [(Reference)](https://news.bitcoin.com/65-of-global-bitcoin-hashrate-concentrated-in-china/) and one-third of global hash rate is in Xinjiang  [(Reference).](https://cointelegraph.com/news/a-single-chinese-region-accounts-for-one-third-of-global-btc-hash-rate)
 * So it might be worthwhile to account for movements in the exchanges between the dollar with the yuan 
 * Bitcoin is used as a vehicle for capital flight out of China. Savers and investors frequently use the cryptocurrency as an alternative holding asset against a weakening Yuan. There is also evidence of a significant negative correlation between Yuan and Bitcoin prices. [(Reference)](https://cointelegraph.com/explained/how-china-influences-bitcoin-price-explained)
+* Historical trends appear to suggest that the crypto markets do pay attention to global events and geopolitical tensions.
+* US-China trade war impact the CNY/USD currencies, which in turn may benefit Bitcoin. [Reference #1](https://currency.com/china-relationship-to-bitcoin-value-coronavirus-and-us-trade-deal) and [Reference #2](https://www.forbes.com/sites/rogerhuang/2020/05/10/bitcoin-might-benefit-from-a-us-china-cold-war/?sh=2c3e457315db)
 
 ```{r, warning=FALSE}
 cny_usd <- get_yahoo('USDCNY=X') %>%
@@ -910,6 +912,7 @@ bitcoin_model <- bitcoin_model %>% fill(cny_usd_close, .direction = "down")
 
 * Data on yahoo is a bit weird, so we took from alternative site (downloaded as csv)
 * It is a measure of the value of the U.S. dollar relative to the value of a basket of currencies of the majority of the U.S.'s most significant trading partners. 
+* A lack of confidence in a country's economy can lead to people believing more in cryptocurrencies rather than traditional currencies, or any political events that has a global impact can also have effects. As such, we will be interested to look at whether the dollar is strong or weak against other currencies, which is a possible feature that may affect Bitcoin (even if it may/may not be a significant factor). 
 
 ```{r, warning=FALSE}
 # load in the data first
@@ -1114,6 +1117,8 @@ http://dx.doi.org/10.1186/s40854-017-0054-0
 19. Marshall, A. (2019, January 16). How China Influences Bitcoin Price, Explained. Retrieved from https://cointelegraph.com/explained/how-china-influences-bitcoin-price-explained
 20. McCarty, M. (2020, October 16). The Ultimate Guide To Building A Crypto Index Fund in 2020. Retrieved from https://blog.shrimpy.io/blog/cryptocurrency-index-funds-step-by-step-guide
 21. Menchero, J., & Nagy, Z. (2020, April 13). Risk and Return of Factor Portfolios: The Impact of Regression Weighting. Retrieved from https://www.msci.com/documents/10199/cb704602-b417-4077-a277-c170501a70d7
+22. Freitas, C. (2020, January 27). US-China news: How crypto markets reacted to the trade war – and other events. Retrieved from https://currency.com/china-relationship-to-bitcoin-value-coronavirus-and-us-trade-deal
+23. Huang, R. (2020, May 10). Bitcoin Might Benefit From A US-China Cold War. Retrieved from https://www.forbes.com/sites/rogerhuang/2020/05/10/bitcoin-might-benefit-from-a-us-china-cold-war/?sh=2c3e457315db
 
 # *Data Sources:*
 
