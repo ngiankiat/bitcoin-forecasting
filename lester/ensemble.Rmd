@@ -77,9 +77,18 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 
 ## 2.2 Getting Bitcoin Features
 ```{r}
-# Importing features from Marcus
+# Importing features from online sources (Marcus)
 bitcoin_features <- read_csv("data/bitcoin_features.csv")
-bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove lastest date to match bitcoin prices and future returns
+# Add sentiment features from reddit (Darren)
+bitcoin_features <- bitcoin_features %>% 
+  left_join(read_csv("data/bitcoin_reddit.csv"), by="date")
+# Add sentiment features from news sites (QL)
+bitcoin_features <- bitcoin_features %>% 
+  left_join(read_csv("data/bitcoin_news.csv") %>% mutate(date = as.Date(date, format = "%d/%m/%y")), by="date")
+
+# Remove lastest date to match bitcoin prices and future returns
+bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]
+
 
 rmarkdown::paged_table(bitcoin_features %>% head())
 ```
@@ -106,13 +115,13 @@ test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2
 # 4. Create Recipe
 ```{r}
 recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
-  update_role(date, future_return, close, new_role = "ID") %>% # Exclude these columns from the model. Only used for ID purpose
+  update_role(date, future_return, close, new_role = "ID")
 
 ```
 
-# 5. Create resamples from cross validation folds of 3 months
+# 5. Create resamples from cross validation folds of 3 months. Use this resample for all models.
 ```{r}
-# Cross Validation Folds for Tuning. Produces 7 folds.
+# Cross Validation Folds for Tuning. Produces 9 folds.
 resamples_cv <- recipe_spec %>%
   prep() %>%
   juice() %>% 
@@ -134,105 +143,109 @@ resamples_cv %>%
     )
 ```
 
-# 6. Define Model
+# 6. Convenience Functions
 ```{r}
+# Convenience functions. Set save_pred = TRUE, save_workflow = TRUE
+# To be used in tune_grid(control = ) later for each model
+ctrl_grid <- control_stack_grid()
+ctrl_res <- control_stack_resamples()
+```
+
+# 6. XGBoost Model
+```{r}
+# Define Model
 xgb_model <- boost_tree(learn_rate = 0.01,
-                        tree_depth = 1,
+                        tree_depth = tune(),
                         min_n = 1,
                         mtry = 500,
                         trees = tune(),
                         stop_iter = 50) %>%
   set_engine('xgboost') %>%
   set_mode('classification')
-
 xgb_model
-```
 
-# 7. Create Workflow
-```{r}
+# Define Workflow
 xgb_wflw <- workflow() %>%
   add_recipe(recipe_spec) %>%
   add_model(xgb_model)
-
 xgb_wflw
-```
 
-# 8. Tuning
-## 8.1 Create grid for tuning.
-```{r}
-# Create grid. Create 10 models.
-xgb_params <- grid_max_entropy(trees(), size = 10)
-xgb_params
-```
-
-## 8.2 Model Tuning with a Grid
-```{r}
-
-# Convenience functions. Set save_pred = TRUE, save_workflow = TRUE
-ctrl_grid <- control_stack_grid()
-ctrl_res <- control_stack_resamples()
-
-# For each fold, pass through all possible models generated from grid size
-# Each row represents one fold
-# In each fold, no. of models x no. of metrics
-# In each fold, for .predictions, no. of models x length of test data
+# Perform tuning and cross-validation on training set
 xgb_model_trained <- xgb_wflw %>% tune_grid(
-  grid = xgb_params,
+  grid = 15,
   metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
   resamples = resamples_cv,
   control = ctrl_grid)
+xgb_model_trained
 
 ```
 
-# 9. Neural Network
+# 9. Neural Network Model
 ```{r}
+# Define Model
 nnet_spec <-
   mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
   set_mode("classification") %>%
   set_engine("nnet")
 
-nnet_rec <- 
-  recipe_spec %>% 
-  step_normalize(all_predictors())
-
-nnet_wflow <- 
-  workflow() %>% 
-  add_recipe(nnet_rec) %>%
+# Define Workflow
+nnet_wflow <- workflow() %>%
+  add_recipe(recipe_spec) %>% 
   add_model(nnet_spec)
 
-nnet_res <- nnet_wflow %>% tune_grid(
+# Perform tuning and cross-validation on training set
+nnet_res <-
+  tune_grid(
+    object = nnet_wflow, 
     resamples = resamples_cv, 
     grid = 10,
+    metrics = metric_set(accuracy, roc_auc, mn_log_loss),
     control = ctrl_grid
   )
 
 ```
 
-
 # 10. Ensemble
 ```{r}
-# Putting together a stacl
+# Putting together a stack
 ensemble_st <- stacks() %>% 
   add_candidates(xgb_model_trained) %>% 
   add_candidates(nnet_res)
 
 ensemble_st_tibble <- as_tibble(ensemble_st)
+# Some rows from neural network are predicting NA. Not sure why.
+# empty <- ensemble_st_tibble %>% filter_all(any_vars(is.na(.)))
 
 # Combining outputs from stack members and give weightage (coefficients) to each stack member
-ensemble_model <- ensemble_st %>% 
-  blend_predictions()
+# Test out a range of penalties and see which produces the best metric (accuracy)
+# Higher penalty, lower number of models selected
+ensemble_weight <- ensemble_st %>% 
+  blend_predictions(penalty = seq(0, 1, 0.1))
+ensemble_weight
 
-# Fit onto full training set
-ensemble_model <- ensemble_st %>% 
-  blend_predictions() %>% 
-  fit_members()
+# Plot the chart of penalty against average accuracy of ensemble model
+autoplot(ensemble_weight)
 
 # Get stacking coefficients
-collect_parameters(ensemble_model, "nnet_res")
+# Don't know why coef is NA here
+collect_parameters(ensemble_weight, "nnet_res")
 
-# Make predictions with ensemble model
-sample <- train %>% 
+# Fit shortlisted models onto full training set
+ensemble_model <- ensemble_weight %>% 
+  fit_members()
+
+# Make predictions with ensemble model on train data
+ensemble_model_train <- train %>% 
   select(date, future_return, future_return_sign) %>% 
-  bind_cols(predict(ensemble_model, train))
+  bind_cols(predict(ensemble_model, train, type = "class"))
+
+# Confusion Matrix
+confusionMatrix(factor(ensemble_model_train$.pred_class),
+                factor(ensemble_model_train$future_return_sign))
+
+# Get Member's Predictions
+train %>% 
+  select(date, future_return, future_return_sign) %>% 
+  bind_cols(predict(ensemble_model, train, type = "class", members = TRUE))
 ```
 

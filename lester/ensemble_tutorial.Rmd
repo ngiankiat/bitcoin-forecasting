@@ -132,8 +132,6 @@ nnet_res <-
   )
 
 split1_models <- nnet_res$.metrics[[1]]
-unique(split1_models$mtry)
-unique(split1_models$min_n)
 split1_predictions <- nnet_res$.predictions[[1]]
 
 ```
@@ -168,7 +166,7 @@ tree_frogs_model_st
 
 ```{r}
 # Identify model coefficients (weights)
-collect_parameters(tree_frogs_model_st, "rand_forest_res")
+aa <- collect_parameters(tree_frogs_model_st, "rand_forest_res")
 
 ```
 
@@ -197,10 +195,167 @@ tree_frogs_pred <-
 tree_frogs_pred
 ```
 
-
 # Binary Classification
 
 ```{r}
+data("tree_frogs")
+tree_frogs_class <- 
+  tree_frogs %>%
+  dplyr::select(-c(clutch, latency))
+
+set.seed(1)
+tree_frogs_class_split <- rsample::initial_split(tree_frogs_class)
+
+set.seed(1)
+tree_frogs_class_train <- rsample::training(tree_frogs_class_split)
+
+set.seed(1)
+tree_frogs_class_test  <- rsample::testing(tree_frogs_class_split)
+
+set.seed(1)
+class_folds <- rsample::vfold_cv(tree_frogs_class_train, v = 5)
 
 ```
+
+```{r}
+ctrl_grid <- 
+  tune::control_grid(
+    save_pred = TRUE,
+    save_workflow = TRUE
+  )
+
+ctrl_res <- 
+  tune::control_resamples(
+    save_pred = TRUE,
+    save_workflow = TRUE
+  )
+
+tree_frogs_2_class_rec <- 
+  recipes::recipe(hatched ~ ., data = tree_frogs_class_train) %>%
+  recipes::step_dummy(recipes::all_nominal(), -hatched) %>%
+  recipes::step_zv(recipes::all_predictors()) %>%
+  recipes::step_normalize(recipes::all_numeric())
+
+# hatched becomes a factor of yes/no
+dataset <- tree_frogs_2_class_rec %>% prep() %>% juice()
+
+# Random Forest
+set.seed(1)
+rand_forest_spec_2 <- 
+  parsnip::rand_forest(
+    mtry = tune(),
+    trees = 500,
+    min_n = tune()
+  ) %>%
+  parsnip::set_mode("classification") %>%
+  parsnip::set_engine("ranger")
+
+log_wf_rf <-
+  workflows::workflow() %>%
+  workflows::add_recipe(tree_frogs_2_class_rec) %>%
+  workflows::add_model(rand_forest_spec_2)
+
+set.seed(1)
+log_res_rf <- 
+  tune::tune_grid(
+    object = log_wf_rf, 
+    resamples = class_folds, 
+    grid = 10,
+    control = ctrl_grid
+  )
+
+# Neural Network
+nnet_spec_2 <-
+  parsnip::mlp(epochs = 100, hidden_units = 5, penalty = 0.1) %>%
+  parsnip::set_mode("classification") %>%
+  parsnip::set_engine("nnet", verbose = 0)
+
+log_wf_nn <- 
+  workflows::workflow() %>%
+  workflows::add_recipe(tree_frogs_2_class_rec) %>%
+  workflows::add_model(nnet_spec_2)
+
+set.seed(1)
+log_res_nn <-
+  tune::fit_resamples(
+    object = log_wf_nn, 
+    resamples = class_folds, 
+    control = ctrl_res
+  )
+
+```
+
+# Stack
+```{r}
+# tree_frogs_data_st <- 
+#   # initialize the stack
+#   stacks() %>%
+#   # add candidate members
+#   add_candidates(log_res_rf) %>%
+#   add_candidates(log_res_nn)
+# 
+# tree_frogs_data_st
+# data_st <- as_tibble(tree_frogs_data_st)
+
+tree_frogs_model_st <- 
+  # initialize the stack
+  stacks() %>%
+  # add candidate members
+  add_candidates(log_res_rf) %>%
+  # add_candidates(log_res_nn) %>%
+  # determine how to combine their predictions
+  blend_predictions() %>%
+  # fit the candidates with nonzero stacking coefficients
+  # Fit onto full training set
+  fit_members()
+
+tree_frogs_model_st
+```
+
+```{r}
+# Identify model coefficients (weights)
+collect_parameters(tree_frogs_model_st, "log_res_rf")
+
+```
+
+```{r}
+# Predict on Test Data
+tree_frogs_pred <-
+  tree_frogs_class_test %>%
+  bind_cols(predict(tree_frogs_model_st, ., type = "class"))
+tree_frogs_pred
+
+```
+
+```{r}
+# Predict using Members' models
+tree_frogs_pred <-
+  tree_frogs_class_test %>%
+  select(hatched) %>%
+  bind_cols(
+    predict(
+      tree_frogs_model_st,
+      tree_frogs_class_test,
+      type = "prob",
+      members = TRUE
+      )
+    )
+
+tree_frogs_pred
+```
+
+```{r}
+log_st <-
+      stacks() %>%
+      add_candidates(log_res_nn) %>%
+      add_candidates(log_res_rf) %>%
+      blend_predictions()
+log_st
+
+log_st <- log_st %>% 
+  fit_members()
+log_st
+
+```
+
 
