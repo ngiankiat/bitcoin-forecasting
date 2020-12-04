@@ -164,6 +164,11 @@ xgb_model <- boost_tree(learn_rate = 0.01,
   set_mode('classification')
 xgb_model
 
+# Define Grid
+xgb_grid <- grid_regular(tree_depth(),
+                         trees(),
+                         levels = 5)
+
 # Define Workflow
 xgb_wflw <- workflow() %>%
   add_recipe(recipe_spec) %>%
@@ -172,11 +177,14 @@ xgb_wflw
 
 # Perform tuning and cross-validation on training set
 xgb_model_trained <- xgb_wflw %>% tune_grid(
-  grid = 15,
+  grid = xgb_grid,
   metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
   resamples = resamples_cv,
   control = ctrl_grid)
 xgb_model_trained
+
+xgb_model_metrics <- xgb_model_trained$.metrics[[1]] %>% 
+  select(trees, tree_depth)
 
 ```
 
@@ -208,6 +216,7 @@ nnet_res <-
 # 10. Ensemble
 ```{r}
 # Putting together a stack
+# Models that are perfectly collinear to other candidate models will be removed
 ensemble_st <- stacks() %>% 
   add_candidates(xgb_model_trained) %>% 
   add_candidates(nnet_res)
