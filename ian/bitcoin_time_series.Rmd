@@ -91,15 +91,19 @@ bitcoin_price_tbl <-
 head(bitcoin_price_tbl)
 ```
 
+## 2.3 Train and Test Time Periods
+
 Split the data into training and testing data to test accuracy of forecasts. For now, we will set the training data period from January 2018 to June 2020, and the forecast period from July to November 2020.
 
+We set the earliest date for the training data to be January 2018 as we are doing feature engineering for a separate model. Since the feature engineering involves the scraping of news articles related to Bitcoin, a limitation we face is backward navigation for articles that were published a long time ago. Thus, we decided that 2018 would be a reasonable time frame that provides us with enough news articles to build the corpus, at the same time making sure that we have a sufficient number of data points to train our forecasting models.
+
 ```{r train test split}
-# Keep last 365 days as test data
+# Keep Jul to Nov 2020 as test data
 bitcoin_price_test_tbl <- 
   bitcoin_price_tbl %>%
   filter(date >= "2020-07-01" & date <= "2020-11-30")
 
-# Remove test data rows from original dataset
+# Keep Jan 2018 to Jun 2020 as train data
 bitcoin_price_train_tbl <- 
   bitcoin_price_tbl %>%
   filter(date >= "2018-01-01" & date <= "2020-06-30")
@@ -183,7 +187,7 @@ Use the `forecast()` function to forecast Bitcoin prices for the next month.
 
 ```{r construct forecast table}
 # Forecast next 30 days
-fcast_arima <- forecast(fit_arima, h = 335)
+fcast_arima <- forecast(fit_arima, h = 153)
 
 # Check if forecast has timetk index
 has_timetk_idx(fcast_arima)
@@ -194,7 +198,7 @@ fcast_tbl <- sw_sweep(fcast_arima, timetk_idx = TRUE)
 fcast_tbl
 ```
 
-Compare ARIMA forecasts with actual Bitcoin prices from Dec 2019 to Nov 2020.
+Compare ARIMA forecasts with actual Bitcoin prices from July 2020 to Nov 2020.
 
 ```{r forecast visualisation}
 # Visualize the forecast with ggplot
@@ -333,7 +337,7 @@ calibration_tbl %>%
 
 Comparing the accuracy of the 5 time series models we trained, the `prophet` models have the lowest MAPE scores. However, the prices of Bitcoin are unlikely to exhibit a steady rise as predicted by the  `prophet_boost()` model. Thus, we will treat the base `prophet` model (model 4) as the most ideal time series model.
 
-```{r}
+```{r prediction signals}
 # Keep prophet forecasts
 prophet_forecasts <-
     calibration_tbl %>%
