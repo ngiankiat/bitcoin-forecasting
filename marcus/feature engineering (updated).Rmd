@@ -24,8 +24,8 @@ The team has categorised our features into these **3 broad categories**: Sentime
 1. News Articles
 2. Reddit
 3. Twitter 
+    + Sentiment analysis is not conducted due to the need to apply for twitter API, while python <code>Twint</code> can bypass this API, but when the team attempted in the usage of it, we realised there are some limitations and unstability in the scrapping of tweets using the package, so we will not proceed with it.
     + Only gathered the total volume of tweets with regards to Bitcoin from a site
-    + Sentiment analysis is not conducted due to the need to apply for twitter API, while python <code>Twint</code> can bypass this API, but when the team attempted in the usage of it, we realised there are some limitations with the package.
 
 * <u>**Technical**</u>
 
@@ -945,11 +945,26 @@ bitcoin_model <- bitcoin_model %>% fill(dollar_index_close, .direction = "down")
         * Stellar (XLM)
 
 * Secondly, Allocation Distribution: 
-
+[Research paper on root-cap weight](https://www.msci.com/documents/10199/cb704602-b417-4077-a277-c170501a70d7)
     + There are a few ways we can do this: Market cap Weighted, Square Root Market Cap Weighted (root-cap weight), Evenly Weighted, Minimum Weight, Maximum Weight. 
-    + We will not use market cap weighted because crypto such as Bitcoin has a significantly higher market cap than any other crypto in the index so the index will not be good if Bitcoin has a much significant higher weightage. Instead, we will use square root market cap weighted to have better diversification of the weights of the 10 crypto in this index. 
-    + Further improvement in future could be looking at setting a min weight for those rank 8-10, or setting a max weight to Bitcoin.
-    + Continuous improvement of this index (such as rebalancing) will be necessary. Currently, it will just serve as a benchmark for comparison.
+    + Other index in the market already created indexes with bitcoin weight making up close to 70% of the index since it is the largest by market cap. The components with a higher market cap carry a higher weighting percentage in the index, which makes sense since it provides a steady growth for the index and reduces risk if those smaller crypto does not perform well.
+    + However, we will attempt to look into creating a square root market cap weighted with the intention to just have better diversification of the weights of the 10 crypto in this index to see how it will perform.
+    + Weightage:
+    | Cryptocurrency | Weights (%) |
+    | -----------    | ----------- |
+    | BTC            |     28.4    |
+    | XRP            |     18.1    |
+    | ETH            |     16.2    |
+    | BCH            |     12.0    |
+    | ADA            |     8.16    |
+    | LTC            |     6.64    |
+    | XLM            |     5.50    |
+    | USDT           |     2.21    |
+    | BNB            |     1.72    |
+    | BNB            |     0.95    |
+    
+    + Further improvement in future could be looking at setting a min weight for those lower rank, or setting a max weight to Bitcoin. Further research into each of the crypto is still necessary to see how we can better improve the weightage of each in the index.
+    + Currently, this is just a simple index created to serve as a benchmark for comparison.
     + Our index will assume a base of 100.
 
 ```{r, warning=FALSE}
@@ -966,9 +981,6 @@ mkt_cap_total <- top10_crypto %>%
 top10_crypto_df <- top10_crypto %>% left_join(mkt_cap_total)
 top10_crypto_df <- top10_crypto_df %>% mutate(weightage = sqrt(market_cap)/sqrt_sum_mkt_cap)
 top10_crypto_df <- top10_crypto_df %>% group_by(date)
-
-# when take sqrt (the weightage of each crypto in the top10 mix will be more acceptable)
-# e.g. 2018-01-01: BTC - 28.4%, ETH - 16.2%, XRP - 18.1%, USDT - 2.2%, LTC - 6.6%, BCH - 12.0%, LINK - 0.9%, ADA - 8.1%, BNB - 1.7%, XLM - 5.5%. Compared to if merely based on market cap, bitcoin would have a proportion of 70%. 
 
 #lets assume the base of this index is 100, so the
 divisor = subset(mkt_cap_total, date == "2018-01-01")$sqrt_sum_mkt_cap/100
@@ -1004,6 +1016,23 @@ ggplot(bitcoin_model, aes(x = date)) +
 ggplot(bitcoin_model, aes(x = date)) + 
   geom_line(aes(y = future_return), colour = "blue", alpha = 0.8) +
   geom_line(aes(y = crypto_index_return), colour = "red", alpha = 0.6)
+
+```
+
+Comparing to the Bitwise Select 10 Large Cap Crypto Index
+
+* The weightage in KEYS:SW for Bitcoin was 74.92%, while the rank 10 crypto make up less than 0.4% of the entire index.
+
+```{r}
+index_bitx <- read.csv("data/index_bitx.csv")
+index_bitx$date <- as.Date(index_bitx$date, format="%B %d %Y")
+
+multiple_crypto_indexes_2 <- crypto_index_df %>% left_join(index_bitx)
+
+ggplot(multiple_crypto_indexes_2, aes(x = date)) + 
+  geom_line(aes(y = crypto_index, colour = "Our Crypto Index")) +
+  geom_line(aes(y = bitx/200,colour = "KEYS:SW")) +
+  scale_y_continuous(sec.axis = sec_axis(~.*200, name = "Title"))
 
 ```
 
@@ -1084,7 +1113,7 @@ http://dx.doi.org/10.1186/s40854-017-0054-0
 18. Haig, S. (2020, May 07). A Single Chinese Region Accounts for One-Third of Global BTC Hash Rate. Retrieved from https://cointelegraph.com/news/a-single-chinese-region-accounts-for-one-third-of-global-btc-hash-rate
 19. Marshall, A. (2019, January 16). How China Influences Bitcoin Price, Explained. Retrieved from https://cointelegraph.com/explained/how-china-influences-bitcoin-price-explained
 20. McCarty, M. (2020, October 16). The Ultimate Guide To Building A Crypto Index Fund in 2020. Retrieved from https://blog.shrimpy.io/blog/cryptocurrency-index-funds-step-by-step-guide
-
+21. Menchero, J., & Nagy, Z. (2020, April 13). Risk and Return of Factor Portfolios: The Impact of Regression Weighting. Retrieved from https://www.msci.com/documents/10199/cb704602-b417-4077-a277-c170501a70d7
 
 # *Data Sources:*
 
@@ -1095,3 +1124,4 @@ http://dx.doi.org/10.1186/s40854-017-0054-0
 3. FSI Data: https://www.financialresearch.gov/financial-stress-index/
 4. US Dollar Index Data: https://www.investing.com/currencies/us-dollar-index
 5. Median Confirmation Time Data: https://www.blockchain.com/charts/median-confirmation-time
+6. Bitwise 10 Large Crypto Index: https://www.bitwiseinvestments.com/indexes/Bitwise-10
