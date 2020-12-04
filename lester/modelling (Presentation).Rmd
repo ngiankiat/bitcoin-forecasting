@@ -312,7 +312,10 @@ base_model <- test %>%
          signal_buyhold = 1)
 
 # Time Series
-prophet_predict <- read_csv("data/prophet_signals.csv") %>% select(-date)
+prophet_predict <- read_csv("data/prophet_signals.csv") %>% 
+  filter(date < "2020-11-30") %>%
+  rename("pred_signal" = "prophet_pred_signal")
+  select(-date)
 
 # rf Prediction on Test Set
 rf_predict <- predict(rf_final, test) %>% 
