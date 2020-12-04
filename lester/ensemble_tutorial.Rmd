@@ -1,0 +1,206 @@
+---
+title: "Modelling with TidyModels"
+author: "Lester Sim"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: no
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+editor_options:
+  chunk_output_type: console
+---
+
+# 1. Load Packages
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE,
+  comment = "#",
+  message = FALSE,
+  warning = FALSE,
+  cache = FALSE,
+  fig.align = "center",
+  class.source = 'white'
+)
+
+# Set knit directory to project directory
+```
+
+```{r}
+library(tidymodels)
+library(tidyverse)
+library(stacks)
+```
+
+```{r}
+# Get Data
+data("tree_frogs")
+tree_frogs <- tree_frogs %>%
+  select(-c(clutch, latency))
+```
+
+```{r}
+# Define Candidate Ensemble Members
+set.seed(1)
+
+tree_frogs_split <- initial_split(tree_frogs)
+tree_frogs_train <- training(tree_frogs_split) # Tibble
+tree_frogs_test  <- testing(tree_frogs_split)  # Tibble
+
+folds <- rsample::vfold_cv(tree_frogs_train, v = 5) # Tibble with each row containing 1 split
+
+# Define Recipe
+# step_dummy creates a specification of a recipe step that will convert nominal data (e.g. character or factors) into one or more numeric binary model terms for the levels of the original data.
+# step_zv creates a specification of a recipe step that will remove variables that contain only a single value.
+tree_frogs_rec <- 
+  recipe(reflex ~ ., data = tree_frogs_train) %>%
+  step_dummy(all_nominal(), -reflex) %>%
+  step_zv(all_predictors())  # Not required
+
+tree_frogs_rec_data <- tree_frogs_rec %>% 
+  prep() %>% 
+  juice()
+
+# Add to workflow
+tree_frogs_wflow <- 
+  workflow() %>% 
+  add_recipe(tree_frogs_rec)
+```
+
+```{r}
+# Set save_pred = TRUE, save_workflow = TRUE
+ctrl_grid <- control_stack_grid()
+
+# 2 Models: RF, Neural
+
+# Random Forest
+rand_forest_spec <- 
+  rand_forest(
+    mtry = tune(),
+    min_n = tune(),
+    trees = 500
+  ) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+
+rand_forest_wflow <-
+  tree_frogs_wflow %>%
+  add_model(rand_forest_spec)
+
+rand_forest_res <- 
+  tune_grid(
+    object = rand_forest_wflow, 
+    resamples = folds, 
+    grid = 10,
+    control = ctrl_grid
+  )
+
+split1_models <- rand_forest_res$.metrics[[1]]
+unique(split1_models$mtry)
+unique(split1_models$min_n)
+split1_predictions <- rand_forest_res$.predictions[[1]]
+
+```
+
+```{r}
+# Neural Network
+
+nnet_spec <-
+  mlp(hidden_units = tune(), penalty = tune(), epochs = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("nnet")
+
+nnet_rec <- 
+  tree_frogs_rec %>% 
+  step_normalize(all_predictors())
+
+nnet_wflow <- 
+  tree_frogs_wflow %>%
+  add_model(nnet_spec)
+
+# Same num of models, same resamples
+nnet_res <-
+  tune_grid(
+    object = nnet_wflow, 
+    resamples = folds, 
+    grid = 10,
+    control = ctrl_grid
+  )
+
+split1_models <- nnet_res$.metrics[[1]]
+unique(split1_models$mtry)
+unique(split1_models$min_n)
+split1_predictions <- nnet_res$.predictions[[1]]
+
+```
+
+
+```{r}
+# Stack
+tree_frogs_data_st <- 
+  # initialize the stack
+  stacks() %>%
+  # add candidate members
+  add_candidates(rand_forest_res) %>%
+  add_candidates(nnet_res)
+
+tree_frogs_data_st
+inter <- as_tibble(tree_frogs_data_st)
+
+tree_frogs_model_st <- 
+  # initialize the stack
+  stacks() %>%
+  # add candidate members
+  add_candidates(rand_forest_res) %>%
+  add_candidates(nnet_res) %>%
+  # determine how to combine their predictions
+  blend_predictions() %>%
+  # fit the candidates with nonzero stacking coefficients
+  # Fit onto full training set
+  fit_members()
+
+tree_frogs_model_st
+```
+
+```{r}
+# Identify model coefficients (weights)
+collect_parameters(tree_frogs_model_st, "rand_forest_res")
+
+```
+
+```{r}
+# Predict on Test Data
+tree_frogs_pred <-
+  tree_frogs_test %>%
+  bind_cols(predict(tree_frogs_model_st, ., type = "class"))
+tree_frogs_pred
+```
+
+```{r}
+# Predict using Members' models
+tree_frogs_pred <-
+  tree_frogs_test %>%
+  select(reflex) %>%
+  bind_cols(
+    predict(
+      tree_frogs_model_st,
+      tree_frogs_test,
+      type = "class",
+      members = TRUE
+      )
+    )
+
+tree_frogs_pred
+```
+
+
+# Binary Classification
+
+```{r}
+
+```
+
