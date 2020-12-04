@@ -1,0 +1,1091 @@
+---
+title: "Bitcoin Feature Engineering"
+author: "Marcus Cheong Wei Ze"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: no
+editor_options:
+  chunk_output_type: console
+---
+
+# **Overview**
+
+The team has categorised our features into these **3 broad categories**: Sentiment, Technical, General.
+
+* <u>**Sentiment**</u>
+
+1. News Articles
+2. Reddit
+3. Twitter 
+    + Only gathered the total volume of tweets with regards to Bitcoin from a site
+    + Sentiment analysis is not conducted due to the need to apply for twitter API, while python <code>Twint</code> can bypass this API, but when the team attempted in the usage of it, we realised there are some limitations with the package.
+
+* <u>**Technical**</u>
+
+1. Bollinger Band Width
+2. RSI
+3. MACD
+4. Accumulation/Distribution Indicator
+5. EMA (12,24,72 days)
+6. SMA (12,24,72 days)
+7. Rate of Change
+8. On-Balance Volume
+9. Network Value to Transactions (NVT) - something similar to "P/E ratio"
+10. Average True Range (ATR)
+11. VIX
+
+* <u>**General**</u>
+
+Given: 
+
+1. Google Trends
+2. Blockchain Indicators
+3. Bitcoin Drawdown 
+4. Vix
+
+Added: 
+
+5. Fed Fund Rates
+6. S&P500 Closing Price
+7. Gold (XAU/USD)
+8. US Dollar Index Price
+9. Created a Crypto Index
+
+A paper uses the following 3 below: [Link](https://arxiv.org/ftp/arxiv/papers/1706/1706.01437.pdf)
+
+10. Financial Stress Index
+11. AAII Sentiment
+12. CNY/USD 
+
+# **Load Packages**
+```{r, collapse=TRUE, message=FALSE, warning=FALSE}
+options(scipen = 99)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(almanac)
+library(lubridate)
+library(Quandl)
+library(gtrendsR)
+library(RcppRoll)
+library(xgboost)
+library(MLmetrics)
+library(pageviews)
+library(quantmod)
+library("doFuture"); registerDoFuture(); plan(multiprocess)
+library(tidyquant)
+library(tidymodels)
+library(tsfeatures)
+library(slider)
+library(timetk)
+library(data.table)
+library(grid)
+library(plotly) #for candlestick plot
+library(hablar) #for bollinger band analysis
+library(skimr)
+
+```
+
+# **Feature Engineering**
+
+```{r, echo=FALSE}
+# The quandl_tidy function is a wrapper around the Quandl function that returns a cleaner tibble.  
+
+Quandl.api_key("s6CuJx8yVodVwU-ymz_5")
+quandl_tidy <- function(code, name) { 
+  df <- Quandl(code) %>% 
+    mutate(code = code, name = name) %>% 
+    rename(date = Date, value = Value) %>% 
+    arrange(date) %>% 
+    as_tibble()
+  return(df)
+}
+
+bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD") %>% 
+  arrange(Date) %>% 
+  as_tibble()
+
+colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
+
+```
+
+```{r, echo=FALSE}
+bitcoin_price[bitcoin_price == 0] <- NA
+bitcoin_price <- bitcoin_price %>% map_df(na.locf)
+
+```
+
+```{r, echo=FALSE}
+bitcoin_model <- bitcoin_price %>%
+  tq_mutate(select = close,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',                            
+            col_rename = 'future_return') %>%
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)),
+         close = lag(close, 1),
+         date = date - days(1)) %>%
+  select(date, close, future_return, future_return_sign) 
+
+bitcoin_model <- bitcoin_model[-1, ]
+
+```
+
+## <u>**SENTIMENT**</u>
+
+### **News Articles and Reddit (NLP)**
+
+### **Bitcoin Twitter Volume**
+
+* The data is extracted from [Sprout Social](https://sproutsocial.com/) which is a social media software company headquartered in Chicago.
+* The purpose of using this data is to see if the volume of the tweets (capturing media attention) affects the prices of bitcoin.
+* A study showed that the number of tweets on Twitter can influence BTC trading volume for the following day which can affect price fluctuations and number of transaction of cryptocurrencies.
+
+```{r, warning=FALSE}
+# load the csv first
+twitter_volume <- read.csv("data/twitter_volume.csv")
+twitter_volume$ï..date <- as.Date(twitter_volume$ï..date)
+colnames(twitter_volume) <- c("date", "tweets_volume")
+bitcoin_model <- bitcoin_model %>% left_join(twitter_volume)
+
+bitcoin_model$tweets_volume[is.na(bitcoin_model$tweets_volume)] <- 0 # Replace the missing value before dec 2013 with 0
+
+```
+
+#### Visualisation
+```{r, warning=FALSE}
+ggplot(bitcoin_model)  + 
+  geom_bar(aes(x=date, y=tweets_volume),stat="identity", fill="tan1", colour="sienna3")+
+  geom_line(aes(x=date, y=close*50),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./50, name = "bitcoin_price"))
+
+```
+
+
+## <u>**TECHNICAL**</u>
+
+### **Bollinger Bands**
+* Bollinger Bands are a price-performance forecasting model revolving around the 20-day simple moving average (SMA) of an asset. The SMA has an upper and lower band around it, which analysts plot using standard deviation.
+* This indicator seeks to convey the market message on the volatility and defines high (resistance) or low (support) on a relative basis. 
+* If the price action hits the upper Bollinger Band, the tool suggests that the asset is overbought and that we may see a rotation from the current levels.
+* As volatility increases, so the bands become further apart. In times of low volatility, the bands contract, or “squeeze.”
+* When the two outer lines are contracting and narrowing down, the volatility is lower, which usually means that the market is ranging and consolidating – the so-called “Bollinger Band squeeze”.
+* A sharp change in the market behavior is likely to lead towards the squeeze breakout. 
+
+```{r, warning=FALSE}
+# create Bollinger Bands
+bitcoin_price_data <- bitcoin_price
+bitcoin_price_data <- bitcoin_price_data %>% 
+  convert(num(open:weighted_price))
+bbands <- BBands(bitcoin_price_data[,c("high","low","close")]) #dn - The lower bollinger band, mavg - middle moving average, up - the upper bollinger band
+
+# join and subset data
+date_band <- "2011-09-13"
+df_1 <- subset(cbind(bitcoin_price, data.frame(bbands[,1:3])), date >= date_band)
+row.names(df_1) <- NULL
+
+```
+
+* We will be calculating the **Bollinger Band Width**, which is simply taking (Upper Bollinger Band - Lower Bollinger Band) / Middle Bollinger Band. If the width becomes narrorwer, it indicates that it will expands next which signals either a buy or sell.
+* According to John Bollinger, the fall in the Bollinger Bandwidth indicator below 2% or 0.02 has led to big moves in the S&P500 index. 
+* We can see if there is any such similarity to the crypto/bitcoin market.
+* Another feature we will add into the model will be **%B** which is taking (Closing Price - Lower Bollinger Band)/(Upper Bollinger Band - Lower Bollinger Band). This  quantifies a security's price relative to the upper and lower Bollinger Band.
+* When %B is above 1, price is above the upper band and when %B is below 0, price is below the lower band. (Reference)[https://school.stockcharts.com/doku.php?id=technical_indicators:bollinger_band_perce]
+
+```{r, warning=FALSE}
+
+df_1 <- df_1 %>% mutate(bb_width = (up-dn)/mavg)
+
+df_1 <- df_1 %>% mutate(bb_percent_b = (close-dn)/(up-dn))
+
+```
+
+```{r, warning=FALSE}
+bb_df <- df_1 %>% select(c(date,bb_width,bb_percent_b))
+bitcoin_model <- bitcoin_model %>% left_join(bb_df)
+
+```
+
+#### Bollinger Band + Bitcoin Prices Visualisation
+```{r, warning=FALSE}
+df_2 <- subset(df_1, date>= "2018-01-01" & date <= "2020-11-30")
+
+# colors column for increasing and decreasing
+for (i in 1:length(df_2[,1])) {
+  if (df_2$close[i] >= df_2$open[i]) {
+    df_2$direction[i] = 'Increasing'
+  } else {
+    df_2$direction[i] = 'Decreasing'
+  }
+}
+
+i <- list(line = list(color = '#008000'))
+d <- list(line = list(color = '#FF0000'))
+
+# plot candlestick chart
+
+fig2 <- df_2 %>% plot_ly(x = ~date, type="candlestick",
+                      open = ~open, close = ~close,
+                      high = ~high, low = ~low, name = "BTC",
+                      increasing = i, decreasing = d) 
+fig2 <- fig2 %>% add_lines(x = ~date, y = ~up , name = "B Bands",
+                         line = list(color = '#000080', width = 0.5),
+                         legendgroup = "Bollinger Bands",
+                         hoverinfo = "none", inherit = F) 
+fig2 <- fig2 %>% add_lines(x = ~date, y = ~dn, name = "B Bands",
+                         line = list(color = '#000080', width = 0.5),
+                         legendgroup = "Bollinger Bands", inherit = F,
+                         showlegend = FALSE, hoverinfo = "none") 
+fig2 <- fig2 %>% add_lines(x = ~date, y = ~mavg, name = "Mv Avg",
+                         line = list(color = '#800000', width = 0.5),
+                         hoverinfo = "none", inherit = F) 
+fig2 <- fig2 %>% layout(yaxis = list(title = "Price"))
+
+# plot volume bar chart
+fig3 <- df_2 
+fig3 <- fig3 %>% plot_ly(x=~date, y=~volume_currency, type='bar', name = "BTC Volume",
+                         color = ~direction, colors = c('#008000','#FF0000')) 
+fig3 <- fig3 %>% layout(yaxis = list(title = "Volume"))
+
+# create rangeselector buttons
+rs <- list(visible = TRUE, x = 0.5, y = -0.055,
+           xanchor = 'center', yref = 'paper',
+           font = list(size = 9),
+           buttons = list(
+             list(count=1,
+                  label='RESET',
+                  step='all'),
+             list(count=1,
+                  label='1 YR',
+                  step='year',
+                  stepmode='backward'),
+             list(count=3,
+                  label='3 MO',
+                  step='month',
+                  stepmode='backward'),
+             list(count=1,
+                  label='1 MO',
+                  step='month',
+                  stepmode='backward')
+           ))
+
+# subplot with shared x axis
+fig2 <- subplot(fig2, fig3, heights = c(0.7,0.2), nrows=2,
+               shareX = TRUE, titleY = TRUE)
+fig2 <- fig2 %>% layout(title = paste("BTC: " , "2018-01-01", " -","2020-11-30"),
+                      xaxis = list(rangeselector = rs),
+                      legend = list(orientation = 'h', x = 0.5, y = 1,
+                                    xanchor = 'center', yref = 'paper',
+                                    font = list(size = 10),
+                                    bgcolor = 'transparent'))
+
+fig2
+
+```
+
+```{r, warning=FALSE}
+plot1 <- ggplot(df_2, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("darkred"))
+plot2 <- ggplot(df_2, aes(x = date)) +  geom_line(aes(y = bb_width, colour = "BOLL BW")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot1), ggplotGrob(plot2), size = "last"))
+
+```
+
+* Other than looking at the BB width, it should be accompanied with the usage of identifying the breakout direction. If there is a positive divergence, it indicates that its heading upwards while price is heading downwards or neutral --> bullish sign.
+
+### **Relative Strength Index (RSI)**
+
+* RSI is a momentum oscillator that measures the speed and change of price movements. 
+* It oscillates between zero and 100. 
+* According to Wilder, RSI is considered overbought when > 70 and oversold when < 30.
+* The industry standard is taking **14 days** as the period.
+
+```{r, warning=FALSE}
+bitcoin_model_date <- as.data.frame(bitcoin_model$date)
+rsi <- as.data.frame(RSI(bitcoin_model$close,14))
+rsi <- cbind(bitcoin_model_date,rsi)
+colnames(rsi) <- c("date","rsi")
+bitcoin_model <- bitcoin_model %>% left_join(rsi)
+
+```
+
+#### Visualisation
+```{r, warning=FALSE}
+plot3 <- ggplot(bitcoin_model, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("darkred"))
+plot4 <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = rsi, colour = "RSI")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot3), ggplotGrob(plot4), size = "last"))
+
+# another visualisation instead
+rsi_vs_close <- ggplot(bitcoin_model, aes(x = date))
+rsi_vs_close <- rsi_vs_close + geom_line(aes(y = close, colour = "Bitcoin Closing Price"))
+rsi_vs_close <- rsi_vs_close + geom_line(aes(y = rsi*100, colour = "Relative Strength Index"))
+rsi_vs_close <- rsi_vs_close + scale_y_continuous(sec.axis = sec_axis(~./100, name = "Title"))
+rsi_vs_close <- rsi_vs_close + scale_colour_manual(values = c("darkred", "steelblue"))
+rsi_vs_close
+```
+
+We will take a look together with Band Width. RSI - tells the direction, bb_width - tells the intensity. E.g. Band width becoming narrower, can be either at the top of bottom of bollinger band, so to determine, look at RSI. RSI increasing from below 30 means is at the bottom of the band and hence can possibly buy. 
+
+```{r, warning=FALSE}
+# Combined with bb_width
+# e.g. RSI going down --> towards oversold band width increases a lot too, may be an indication to buy
+# e.g. RSI going up --> bullish, already gaining momentum, bandwidth increasing too, may also be an indication to buy, so depends on the risk appetite of investor when to enter.
+
+plot2 <- ggplot(df_1, aes(x = date)) +  geom_line(aes(y = bb_width, colour = "Bollinger Band Width")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+plot3 <- ggplot(bitcoin_model, aes(x = date)) + geom_line(aes(y = close, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("darkred"))
+plot4 <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = rsi, colour = "RSI")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot3), ggplotGrob(plot4), ggplotGrob(plot2), size = "last"))
+
+```
+
+### **MACD (Moving Average Convergence/Divergence)**
+
+* The MACD gauges strength of current price trends by looking at pricing events in the past. As a ‘lagging indicator,’ that follows trends, MACD looks at changes in the direction, momentum, and duration of trends by calculating the difference between exponential moving averages (EMA). 
+* Buy signal arises when MACD crosses from below to above the signal line. (bullish signal) - price of the bitcoin is likely to experience upward momentum
+* Sell signal arises when MACD crosses from above to below the signal line. (bearish signal)
+* Usually Short Period (fast) = 12days, Long Period (slow) = 26days, nSig(k) = 9days. [(Reference)](https://bookdown.org/kochiuyu/technical-analysis-with-r-second-edition/macd.html)
+* Since it was mentioned that traders **use the MACD’s histogram** (which is MACD - signal) to identify when bullish or bearish momentum is high, so we will only extract the distance calculated (MACD-signal) column to add into the bitcoin model. [(Reference)](https://www.investopedia.com/terms/m/macd.asp)
+
+```{r, warning=FALSE}
+# Usually, K = 9 days,  S = 12 days and L = 26 days
+
+myMACD <- function (x,price,S,L,K){
+  MACD <- EMA(price,S) - EMA(price,L)
+  signal <- EMA(MACD,K)
+  date <- x[,1]
+  price <- price
+  output <- cbind(date,price, MACD,signal)
+  colnames(output) <- c("date","closing_price", "MACD","signal")
+  return(output)
+}
+
+macd <- myMACD(bitcoin_price,Cl(bitcoin_price), 12, 26,9)
+tail(macd,n=5)
+
+macd <- macd %>% mutate(macd_signal_dist = MACD-signal)
+
+```
+
+```{r, warning=FALSE}
+macd_df <- macd %>% select(c(date,macd_signal_dist))
+bitcoin_model <- bitcoin_model %>% left_join(macd_df)
+
+```
+
+#### Visualisation
+```{r, warning=FALSE}
+macd$direction <- ifelse(macd$macd_signal_dist>0,"Increasing","Decreasing")
+
+macd_chart <- ggplot(macd, aes(x = date))
+macd_chart <- macd_chart + geom_line(aes(y = MACD, colour = "Moving Average Covergence Divergence (12,6,9)"))
+macd_chart <- macd_chart + geom_line(aes(y = signal, colour = "Signal"), linetype="dashed")
+macd_chart <- macd_chart + geom_bar(aes(y = macd_signal_dist,fill = direction),stat = "identity") + scale_fill_manual(values = c("Increasing" = "#008000", "Decreasing" = "#FF0000"))
+macd_chart <- macd_chart + scale_colour_manual(values = c("darkred", "steelblue"))
+macd_chart <- macd_chart + scale_x_date(limits = as.Date(c('2020-01-01','2020-06-30')))
+macd_chart
+
+plot5<- ggplot(macd, aes(x = date)) +  geom_line(aes(y = closing_price, colour = "Bitcoin Closing Price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y")) + 
+  scale_colour_manual(values = c("steelblue"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plot5), ggplotGrob(macd_chart), size = "last"))
+
+```
+
+
+### **Accumulation/Distribution Indicator**
+
+[Reference](https://www.investopedia.com/terms/a/accumulationdistribution.asp)
+
+* The accumulation/distribution measure seeks to identify divergences between the stock price and volume flow. 
+* This provides insight into how strong a trend is. 
+* If the price is rising but the indicator is falling this indicates that buying or accumulation volume may not be enough to support the price rise and a price decline could be forthcoming.
+* A rising A/D line helps confirm a rising price trend.
+* A falling A/D line helps confirm a price downtrend.
+* If the price is rising but A/D is falling, it signals underlying weakness and a potential decline in price.
+* If the price of an asset is falling but A/D is rising, it signals underlying strength and the price may start to rise.
+
+```{r, warning=FALSE}
+acu_dis_df <- bitcoin_price
+acu_dis_df <- acu_dis_df %>% mutate(cmfv = ((bitcoin_price$close-bitcoin_price$low)-(bitcoin_price$high-bitcoin_price$close))/(bitcoin_price$high-bitcoin_price$low)*bitcoin_price$volume_currency)
+acu_dis_df$cmfv[is.na(acu_dis_df$cmfv)] <- 0
+acu_dis_df <- acu_dis_df %>% mutate(cumulative_cmfv = cumsum(cmfv))
+
+```
+
+```{r, warning=FALSE}
+
+acu_dis_df_add <- acu_dis_df %>% select(date,cumulative_cmfv)
+bitcoin_model <- bitcoin_model %>% left_join(acu_dis_df_add)
+
+```
+
+#### Visualisation
+```{r, warning=FALSE}
+ggplot(acu_dis_df)  + 
+  geom_line(aes(x=date, y=cumulative_cmfv),stat="identity", colour="sienna3")+
+  geom_line(aes(x=date, y=close*1000000),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./1000000, name = "bitcoin_price")) +
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y"))
+```
+
+### **EMA**
+
+[Reference](https://www.mdpi.com/2227-9091/8/2/44)
+
+EMA: More weightage placed on recent price levels rather than past ones compared to using SMA
+
+```{r, warning=FALSE}
+# 12-days EMA, 24-days EMA, 72-days EMA
+
+bitcoin_date <- as.data.frame(bitcoin_price$date)
+colnames(bitcoin_date) <- c("date")
+
+bitcoin_ema <- list()
+range_ema <- c(12,24,72)
+for (i in seq_along(range_ema)){
+  bitcoin_ema_v <- EMA(Cl(bitcoin_price),n=i)
+  bitcoin_ema[[i]] <- bitcoin_ema_v
+}
+
+bitcoin_ema <- as.data.frame(do.call(cbind, bitcoin_ema)) 
+names_ema <- c(paste0("ema_", range_ema)) %>% strsplit(split = " ")
+colnames(bitcoin_ema) <- names_ema
+ema <- bitcoin_date %>% cbind(bitcoin_ema)
+
+bitcoin_model <- bitcoin_model %>% left_join(ema)
+
+
+```
+
+### **SMA**
+
+```{r, warning=FALSE}
+# 12-days SMA, 24-days SMA, 72-days SMA
+
+bitcoin_sma <- list()
+range_sma <- c(12,24,72)
+for (i in seq_along(range_sma)){
+  bitcoin_sma_v <- SMA(Cl(bitcoin_price),n=i)
+  bitcoin_sma[[i]] <- bitcoin_sma_v
+}
+
+bitcoin_sma <- as.data.frame(do.call(cbind, bitcoin_sma)) 
+names_sma <- c(paste0("sma_", range_sma)) %>% strsplit(split = " ")
+colnames(bitcoin_sma) <- names_sma
+sma <- bitcoin_date %>% cbind(bitcoin_sma)
+
+bitcoin_model <- bitcoin_model %>% left_join(sma)
+
+```
+
+### **Rate of Change**
+
+[Reference](https://www.investopedia.com/terms/p/pricerateofchange.asp)
+
+* The n value is how many periods ago the current price is being compared to. Smaller values will see the ROC react more quickly to price changes, but that can also mean more false signals. A larger value means the ROC will react slower, but the signals could be more meaningful when they occur.
+* Short-term trader traders typically use a smaller number while longer-term investors use a larger number.
+
+```{r, warning=FALSE}
+# Assumptions:
+# short term: 14,28
+# longer term: 90,180,200
+
+bitcoin_roc <- list()
+range_roc <- c(14,28,90,180,200)
+for (i in seq_along(range_roc)){
+  bitcoin_roc_v <- ROC(Cl(bitcoin_price),n=i)
+  bitcoin_roc[[i]] <- bitcoin_roc_v
+}
+
+bitcoin_roc <- as.data.frame(do.call(cbind, bitcoin_roc)) 
+names_roc <- c(paste0("roc_", range_roc)) %>% strsplit(split = " ")
+colnames(bitcoin_roc) <- names_roc
+
+bitcoin_roc <- bitcoin_date %>% cbind(bitcoin_roc)
+
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_roc)
+
+```
+
+#### Visualisation
+
+ROC states that whenever the Rate of Change goes above zero line from below, it states a positive momentum while when the ROC goes below zero line from above; it generates a negative momentum in the price.
+
+[Reference](https://www.ambroker.com/en/analysis/blog/what-rate-change-roc-indicator-and-how-use-trading/)
+
+* When ROC is above the zero line and keeps on rising, it shows that the trend is not only up but the speed of the uptrend is accelerating.
+* When ROC is above zero line but falling, it shows that the speed of the uptrend is slowing down.
+* When ROC is above zero and again starts rising and crosses the previous top, it shows that the uptrend is very much in its speed.
+* When ROC is below zero line but falling, it shows that downtrend is increasing its speed.
+* When ROC is below zero but starts rising upward, it shows that the speed of the downtrend is slowing down.
+* When ROC is below zero and starts falling, it shows that the downtrend has accelerated its speed once again.
+
+```{r, warning=FALSE}
+plota <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = roc_14, colour = "ROC_14days")) + 
+  scale_x_date(limits = as.Date(c('2020-01-01','2020-06-30')),labels=date_format("%b-%Y")) +
+  scale_colour_manual(values = c("steelblue"))
+plotb <- ggplot(bitcoin_model, aes(x = date)) + geom_line(aes(y = roc_90, colour = "ROC_90days")) +
+  scale_x_date(limits = as.Date(c('2020-01-01','2020-06-30')),labels=date_format("%b-%Y")) +
+  scale_colour_manual(values = c("darkred"))
+plotc <- ggplot(bitcoin_model, aes(x = date)) +  geom_line(aes(y = roc_200, colour = "ROC_200days")) +
+  scale_x_date(limits = as.Date(c('2020-01-01','2020-06-30')),labels=date_format("%b-%Y")) +
+  scale_colour_manual(values = c("green"))
+
+grid.newpage()
+grid.draw(rbind(ggplotGrob(plota), ggplotGrob(plotb), ggplotGrob(plotc), size = "last"))
+
+```
+
+### **On-Balance Volume**
+
+[Reference](https://blog.okcoin.com/2020/07/17/top-bitcoin-price-indicators-metrics-traders-need-to-know/)
+
+* On-balance volume and the accumulation/distribution line are similar in that they are both momentum indicators that use volume to predict the movement.
+* This indicator refers to volume changes, measuring buying and selling pressure, to analyze possible future price movements. 
+* By looking at cumulative volume, the OBV aims to determine market sentiment, predicting whether investors are bullish or bearish. Buy volume increases the metric, sell volume decreases the metric.
+
+```{r, warning=FALSE}
+bitcoin_obv <- as.data.frame(OBV(bitcoin_price$close, bitcoin_price$volume_currency))
+bitcoin_obv <- bitcoin_date %>% cbind(bitcoin_obv)
+colnames(bitcoin_obv) <- c("date","on_balance_vol")
+
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_obv)
+
+```
+
+### **NVT**
+
+[Reference](https://help.interdax.com/hc/en-001/articles/360002605137-What-is-the-Network-Value-to-Transactions-NVT-Ratio-)
+
+* NVT Ratio (Network Value to Transactions Ratio) is similar to the PE Ratio used in equity markets.
+* Similar to the price-to-earnings (PE) ratio used in equity charts, the NVT looks at whether BTC is undervalued or overvalued. The ratio represents current market capitalization via network value and the level of USD-based transaction volume over a 24-hour period.
+* High NVT can indicate high growth or that the price may have reached an unsustainable level, while low NVT can signal market opportunity. 
+* We will use the bitcoin indicators data to do this calculation. It takes **Bitcoin Market Capitalization/Bitcoin Estimated Transaction Volume USD**.
+
+```{r, warning=FALSE}
+# Data about bitcoin activity, transaction fees, and mining. 
+print("Downloading bitcoin indicators.")
+code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"), 
+                  c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"), 
+                  c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"), 
+                  c("BCHAIN/ETRAV", "Bitcoin Estimated Transaction Volume BTC"), 
+                  c("BCHAIN/ETRVU", "Bitcoin Estimated Transaction Volume USD"), 
+                  c("BCHAIN/TRVOU", "Bitcoin USD Exchange Trade Volume"), 
+                  c("BCHAIN/NTRAN", "Bitcoin Number of Transactions"), 
+                  c("BCHAIN/NTRAT", "Bitcoin Total Number of Transactions"), 
+                  c("BCHAIN/NTREP", "Bitcoin Number of Transactions Excluding Popular Addresses"), 
+                  c("BCHAIN/NTRBL", "Bitcoin Number of Tansaction per Block"), 
+                  c("BCHAIN/ATRCT", "Bitcoin Median Transaction Confirmation Time"), 
+                  c("BCHAIN/TRFEE", "Bitcoin Total Transaction Fees"), 
+                  c("BCHAIN/TRFUS", "Bitcoin Total Transaction Fees USD"), 
+                  c("BCHAIN/CPTRA", "Bitcoin Cost Per Transaction"), 
+                  c("BCHAIN/CPTRV", "Bitcoin Cost % of Transaction Volume"), 
+                  c("BCHAIN/BLCHS", "Bitcoin api.blockchain Size"), 
+                  c("BCHAIN/AVBLS", "Bitcoin Average Block Size"), 
+                  c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"), 
+                  c("BCHAIN/HRATE", "Bitcoin Hash Rate"), 
+                  c("BCHAIN/MIREV", "Bitcoin Miners Revenue"), 
+                  c("BCHAIN/BCDDE", "Bitcoin Days Destroyed"), 
+                  c("BCHAIN/BCDDW", "Bitcoin Days Destroyed Minimum Age 1 Week"), 
+                  c("BCHAIN/BCDDM", "Bitcoin Days Destroyed Minimum Age 1 Month"), 
+                  c("BCHAIN/BCDDY", "Bitcoin Days Destroyed Minimum Age 1 Year") ,
+                  c("BCHAIN/BCDDC", "Bitcoin Days Destroyed Cumulative"))
+
+bitcoin_data <- tibble()
+# bitcoin_data <- foreach(i=seq_along(code_list), .combine='bind_rows') %dopar% {quandl_tidy(code_list[[i]][1], code_list[[i]][2])}
+for (i in seq_along(code_list)) { 
+  print(str_c("Downloading data for ", code_list[[i]][1], "."))
+  bitcoin_data <- bind_rows(bitcoin_data, 
+                            quandl_tidy(code_list[[i]][1], code_list[[i]][2]))
+}
+
+```
+
+```{r, warning=FALSE}
+# Clean Bitcoin Indicators
+bitcoin_data <- bitcoin_data %>% 
+  select(date, value, code) %>% 
+  spread(code, value)
+colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
+names(bitcoin_data) <- tolower(names(bitcoin_data))
+
+```
+
+```{r, warning=FALSE}
+# NVT
+bitcoin_data$nvt <- bitcoin_data$bchain.mktcp/bitcoin_data$bchain.etrvu
+bitcoin_data_nvt <- select(bitcoin_data,c(date,nvt))
+
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_data_nvt)
+
+```
+
+### **Average True Range (ATR)**
+
+[Reference](https://www.investopedia.com/terms/a/atr.asp)
+
+* A common indicator designed to measure volatility
+* It is typically derived from the 14-day moving average of a series of true range indicators.
+* neither indicates trend direction nor momentum --> so need other indicators to do that instead
+* experiencing a high level of volatility has a higher ATR, and a low volatility stock has a lower
+
+```{r, warning=FALSE}
+
+atr <- ATR(bitcoin_price[,c("high","low","close")], n=14) #14-days moving average
+atr <- bitcoin_date %>% cbind(atr)
+atr <- select(atr,c(date,atr))
+
+bitcoin_model <- bitcoin_model %>% left_join(atr)
+
+```
+
+## <u>**GENERAL**</u>
+
+### **Google Trends**
+```{r,eval=FALSE}
+# Scrape Google Data
+download_all <- FALSE
+if (download_all == TRUE) {
+  dates <- tibble(dates = ymd("2011-01-01") + months(0:120)) %>% filter(dates <= Sys.Date())
+} else {
+  dates <- tibble(dates = ymd("2017-01-01") + months(0:120)) %>% filter(dates <= Sys.Date())
+}
+
+google_trends <- function(query, begin_date, end_date) {
+  df <- gtrends(keyword = 'bitcoin',
+                time = str_c(begin_date, ' ', end_date))[['interest_over_time']] %>%
+    select(date, hits) %>%
+    mutate(date = as.Date(date)) %>%
+    as_tibble()
+  return(df)
+}
+
+```
+
+```{r, eval=FALSE}
+# Download Google Trends Daily Data
+for (i in 1:nrow(dates)) {
+  month <- dates[["dates"]][i]
+  begin_date <- as.Date(month)
+  end_date <- as.Date(month) + months(1) - days(1)
+  end_date <- as.Date(ifelse(end_date >= Sys.Date(), Sys.Date(), end_date))
+  print(str_c("Downloading Google Trends data from ", begin_date, " to ", end_date, "."))
+  
+  df <- google_trends("bitcoin", begin_date, end_date)
+  
+  write_csv(df, str_c("C:\\Users\\marcu\\Desktop\\NUS BBA3\\Y4.S1\\DBA4761\\Final Project\\Own Version\\google-trend-daily\\google-trends-daily-", begin_date, "-", end_date, ".csv"))
+}
+
+```
+
+```{r, eval=FALSE}
+# Download Google Trends Monthly Data
+monthly <- google_trends("bitcoin", "2011-01-01", Sys.Date()) %>% 
+  rename(hits_monthly = hits)
+
+# change those <1 to 1 as later the conversion to numeric will not have NA instead
+monthly$hits_monthly[monthly$hits_monthly=="<1"]<- "1"
+```
+
+```{r, eval=FALSE}
+# Rebase
+bitcoin_google <- list.files('google-trend-daily') %>%
+  map_df(~ read_csv(file.path('google-trend-daily', str_c(.)), col_types = c('Di'))) %>%
+  rename(hits_daily = hits) %>%
+  left_join(monthly) %>%
+  fill(hits_monthly) %>%
+  mutate(hits_monthly = as.numeric(hits_monthly),
+         hits_daily = hits_daily * hits_monthly / 100)
+
+```
+
+The 3 chunks above are how the google trends were obtained. Since we have already ran this previously, now we will just load in the data that we have saved as csv and add to the model below. 
+
+```{r, warning=FALSE}
+bitcoin_google <- read.csv("data/bitcoin_google.csv")
+bitcoin_google$date <- as.Date(bitcoin_google$date)
+# add to model
+bitcoin_model <- bitcoin_model %>% 
+  left_join(bitcoin_google)
+```
+
+### **Blockchain Indicators**
+```{r, warning=FALSE}
+bitcoin_data_df <- select(bitcoin_data, -c(nvt))
+bitcoin_model <- bitcoin_model %>% left_join(bitcoin_data_df)
+
+```
+
+### **Bitcoin Drawdown**
+* A drawdown refers to how much an investment or trading account is down from the peak before it recovers back to the peak.
+
+```{r, warning=FALSE}
+bitcoin_model <- bitcoin_model %>%
+  mutate(close_drawdown = -1 * (1 - close / cummax(close)))
+
+```
+
+### **VIX**
+```{r, warning=FALSE}
+get_yahoo <- function(ticker) {
+  
+  df <- getSymbols(ticker, src = 'yahoo', auto.assign = FALSE, from = '1900-01-01')
+  
+  df <- df %>%
+    as_tibble() %>%
+    mutate(date = index(df))
+  
+  colnames(df) <- c("open", "high", "low", "close", "volume", "adjusted_close", "date", "ticker")
+  
+  return(df)
+  
+}
+```
+
+```{r, warning=FALSE}
+vix <- get_yahoo('^VIX') %>%
+  select(date, vix = adjusted_close)
+
+bitcoin_model <- bitcoin_model %>% left_join(vix)
+bitcoin_model <- bitcoin_model %>% fill(vix, .direction = "down")
+```
+
+### **Federal Funds Rate**
+
+* Besides all the data that's scrapped, a research paper [(Reference)](https://www.econstor.eu/bitstream/10419/176446/1/10.1186_s40854-017-0054-0.pdf) has revealed that Federal Funds Rate is a possible influence on Bitcoin prices. 
+* FFR is the target interest rate set by the FOMC at which commercial banks borrow and lend their excess reserves to each other overnight. FOMC sets a target federal funds rate eight times a year, based on prevailing economic conditions.
+* As an investment asset, the US Federal Reserve’s Interest Rate Policy can have certain impact on Bitcoin price. Increase in the FFR may have adverse impact on Bitcoin price based on the following two assumptions: rise in US dollar and reduce in speculative investments. 
+  + First, the US dollar will benefit from the rate increase because raising interest rates may lead to capital flow back to the US market therefore cause Bitcoin price fell. 
+  + Second, increase in interest rate could reduce speculative investments. 
+* The data was downloaded from [this site](https://fred.stlouisfed.org/series/EFFR)
+  
+```{r, warning=FALSE}
+# load the csv first
+fedfundsrate <- read.csv("data/fedfundsrate.csv")
+fedfundsrate$DATE <- as.Date(fedfundsrate$DATE)
+fedfundsrate <- subset(fedfundsrate, DATE>=as.Date("2011-09-13"))
+colnames(fedfundsrate) <- c("date", "effr")
+fedfundsrate$effr[fedfundsrate$effr=="."] <- NA
+fedfundsrate <- fedfundsrate %>% map_df(na.locf)
+fedfundsrate$effr <- as.numeric(fedfundsrate$effr)
+
+```
+
+```{r, warning=FALSE}
+bitcoin_model <- bitcoin_model %>% left_join(fedfundsrate)
+bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
+
+```
+
+### **S&P500**
+```{r, warning=FALSE}
+sp500 <- get_yahoo('^GSPC') %>%
+  select(date, sp500 = adjusted_close)
+bitcoin_model <- bitcoin_model %>% left_join(sp500)
+# fill na downwards for weekend missing values - fill with fri closing price
+bitcoin_model <- bitcoin_model %>% fill(sp500, .direction = "down")
+
+```
+
+### **Gold Price**
+
+* XAU/USD
+* A special report by Bloomberg last month notes that the correlation between the virtual currency and gold was at an all-time high and BTC was maturing from a risk-on speculative asset to a gold-like store of value.
+
+```{r, warning=FALSE}
+# load the csv first
+xau_usd_historical <- read.csv("data/xau_usd_historical.csv")
+xau_usd_historical$ï..Date <- as.Date(xau_usd_historical$ï..Date, format="%B %d, %Y")
+xau_usd_df <- select(xau_usd_historical,c(ï..Date,Price))
+colnames(xau_usd_df) <- c("date","gold_price")
+
+```
+
+```{r, warning=FALSE}
+bitcoin_model <- bitcoin_model %>% left_join(xau_usd_df)
+bitcoin_model <- bitcoin_model %>% fill(gold_price,.direction = "down")
+
+```
+
+#### Visualisation
+```{r, warning=FALSE}
+ggplot(bitcoin_model)  + 
+  geom_line(aes(x=date, y=close),stat="identity", colour="sienna3")+
+  geom_line(aes(x=date, y=gold_price*10),stat="identity") + scale_y_continuous(sec.axis = sec_axis(~./10, name = "gold_price"))
+  scale_x_date(limits = as.Date(c('2018-01-01','2020-11-30')),labels=date_format("%b-%Y"))
+```
+
+### **Financial Stress Index**
+
+[Reference](https://www.financialresearch.gov/financial-stress-index/)
+
+* The OFR Financial Stress Index (OFR FSI) is a daily market-based snapshot of stress in global financial markets. It is constructed from 33 financial market variables, such as yield spreads, valuation measures, and interest rates. The OFR FSI is positive when stress levels are above average, and negative when stress levels are below average.
+
+* The OFR FSI incorporates five categories of indicators: credit, equity valuation, funding, safe assets and volatility. The FSI shows stress contributions by three regions: United States, other advanced economies, and emerging markets. The value of the OFR FSI on a given day is the weighted average level of each variable observed in the market on that day, relative to its history. The index is zero when this average is zero, suggesting that stress is at normal levels. The index is calculated after each U.S. trading day.
+
+```{r, warning=FALSE}
+# load the csv first
+fsi<- read.csv("data/fsi.csv")
+fsi_df <- fsi %>% select(date="Date", ofr_fsi = "OFR.FSI")
+fsi_df$date <- as.Date(fsi_df$date)
+                             
+bitcoin_model <- bitcoin_model %>% left_join(fsi_df)
+
+#weekend missing, fill by fri's numbers
+bitcoin_model <- bitcoin_model %>% fill(ofr_fsi,.direction = "down")
+
+```
+
+### **AAII Sentiment**
+
+* The AAII Investor Sentiment Survey measures the percentage of individual investors who are bullish, bearish, and neutral on the stock market for the next six months; individuals are polled from the ranks of the AAII membership on a weekly basis. Only one vote per member is accepted in each weekly voting period.
+
+* Since this AAII sentiment (comprises bullish, neutral and bearish sentiment) is for stock market, we take the assumption that bitcoin is seen as a "safe haven" compared to stock, so we will take the bearish sentiment.
+
+* This is a weekly number, so we will just fill the every day with that week's number.
+
+```{r, warning=FALSE}
+# The quandl_tidy function is a wrapper around the Quandl function that returns a cleaner tibble.  
+Quandl.api_key("s6CuJx8yVodVwU-ymz_5")
+
+aaii_sentiment <- Quandl("AAII/AAII_SENTIMENT") %>% 
+  arrange(Date) %>% 
+  as_tibble()
+
+aaii_sentiment_df <- aaii_sentiment %>% select(date="Date", aaii_bearish_sentiment = "Bearish")
+
+bitcoin_model <- bitcoin_model %>% left_join(aaii_sentiment_df)
+
+bitcoin_model <- bitcoin_model %>% fill(aaii_bearish_sentiment,.direction = "up")
+
+```
+
+### **CNY/USD**
+* Bitcoin is mostly traded in China [(Reference)](https://www.businessinsider.com/bitcoin-trading-china-yuan-remnibi-2017-1)
+* Chinese mining pools control more than 60% of the Bitcoin network’s collective hashrate [(Reference)](https://news.bitcoin.com/65-of-global-bitcoin-hashrate-concentrated-in-china/) and one-third of global hash rate is in Xinjiang  [(Reference).](https://cointelegraph.com/news/a-single-chinese-region-accounts-for-one-third-of-global-btc-hash-rate)
+* So it might be worthwhile to account for movements in the exchanges between the dollar with the yuan 
+* Bitcoin is used as a vehicle for capital flight out of China. Savers and investors frequently use the cryptocurrency as an alternative holding asset against a weakening Yuan. There is also evidence of a significant negative correlation between Yuan and Bitcoin prices. [(Reference)](https://cointelegraph.com/explained/how-china-influences-bitcoin-price-explained)
+
+```{r, warning=FALSE}
+cny_usd <- get_yahoo('USDCNY=X') %>%
+  select(date, cny_usd_close = adjusted_close)
+bitcoin_model <- bitcoin_model %>% left_join(cny_usd)
+
+# fill na downwards for weekend missing values - fill with fri closing price
+bitcoin_model <- bitcoin_model %>% fill(cny_usd_close, .direction = "down")
+
+```
+
+### **US Dollar Index Price**
+
+* Data on yahoo is a bit weird, so we took from alternative site (downloaded as csv)
+* It is a measure of the value of the U.S. dollar relative to the value of a basket of currencies of the majority of the U.S.'s most significant trading partners. 
+
+```{r, warning=FALSE}
+# load in the data first
+us_dollar_index_historical_data <- read.csv("data/us_dollar_index_historical_data.csv")
+us_dollar_index_historical_data$ï..Date <- as.Date(us_dollar_index_historical_data$ï..Date, format="%B %d, %Y" )
+us_dollar_index <- select(us_dollar_index_historical_data, c(ï..Date,Price))
+colnames(us_dollar_index) <- c("date","dollar_index_close")
+
+bitcoin_model <- bitcoin_model %>% left_join(us_dollar_index)
+bitcoin_model <- bitcoin_model %>% fill(dollar_index_close, .direction = "down")
+
+```
+
+### **Create a Crypto Market Cap Index**
+
+* Another way to get a comparison of how any particular crypto is moving relative to the crypto market is to build an index to compare it to. An index will also be able to show trends and changes in investing patterns.
+
+* We have created a simple crypto index based on weighted market cap of top 10 crypto. (Market capitalization-weighted). Using an index, an investor can see a mood of the market and can make informed decisions.
+
+* Firstly, Asset selection: 
+
+    + We will be selecting the top 10 crypto based on market cap. (According to coinmarketcap.com)
+        * Bitcoin (BTC)
+        * Ethereum (ETH)
+        * XRP
+        * Tether (USDT)
+        * Litecoin (LTC)
+        * Bitcoin Cash (BCH)
+        * Chainlink (LINK)
+        * Cardano (ADA)
+        * Polkadot (DOT) - REMOVED because no data backed to Jan 01 2018
+        * Binance Coin (BNB)
+        * Stellar (XLM)
+
+* Secondly, Allocation Distribution: 
+
+    + There are a few ways we can do this: Market cap Weighted, Square Root Market Cap Weighted (root-cap weight), Evenly Weighted, Minimum Weight, Maximum Weight. 
+    + We will not use market cap weighted because crypto such as Bitcoin has a significantly higher market cap than any other crypto in the index so the index will not be good if Bitcoin has a much significant higher weightage. Instead, we will use square root market cap weighted to have better diversification of the weights of the 10 crypto in this index. 
+    + Further improvement in future could be looking at setting a min weight for those rank 8-10, or setting a max weight to Bitcoin.
+    + Continuous improvement of this index (such as rebalancing) will be necessary. Currently, it will just serve as a benchmark for comparison.
+    + Our index will assume a base of 100.
+
+```{r, warning=FALSE}
+top10_crypto <- read.csv("data/top10_crypto.csv")
+
+top10_crypto$ï..date <- as.Date(top10_crypto$ï..date, format="%B %d, %Y")
+
+colnames(top10_crypto) <- c("date", "open", "high", "low", "close", "volume", "market_cap", "symbol")
+
+mkt_cap_total <- top10_crypto %>% 
+  group_by(date) %>% 
+  summarise(sqrt_sum_mkt_cap = sum(sqrt(market_cap)))
+
+top10_crypto_df <- top10_crypto %>% left_join(mkt_cap_total)
+top10_crypto_df <- top10_crypto_df %>% mutate(weightage = sqrt(market_cap)/sqrt_sum_mkt_cap)
+top10_crypto_df <- top10_crypto_df %>% group_by(date)
+
+# when take sqrt (the weightage of each crypto in the top10 mix will be more acceptable)
+# e.g. 2018-01-01: BTC - 28.4%, ETH - 16.2%, XRP - 18.1%, USDT - 2.2%, LTC - 6.6%, BCH - 12.0%, LINK - 0.9%, ADA - 8.1%, BNB - 1.7%, XLM - 5.5%. Compared to if merely based on market cap, bitcoin would have a proportion of 70%. 
+
+#lets assume the base of this index is 100, so the
+divisor = subset(mkt_cap_total, date == "2018-01-01")$sqrt_sum_mkt_cap/100
+mkt_cap_total <- mkt_cap_total %>% mutate(crypto_index = sqrt_sum_mkt_cap/divisor)
+
+
+crypto_index <- mkt_cap_total %>% tq_mutate(select = crypto_index,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'log',                            
+            col_rename = 'crypto_index_return')
+
+# we will add the returns of index and index into the model
+crypto_index_df <- select(crypto_index, c("date","crypto_index", "crypto_index_return"))
+
+bitcoin_model <- bitcoin_model %>% left_join(crypto_index_df)
+
+```
+
+### Using data from 2018 onwards for the Model
+```{r, warning=FALSE}
+bitcoin_model <- subset(bitcoin_model, date>= "2018-01-01" & date <= "2020-11-30")
+
+bitcoin_features <- select(bitcoin_model, -c(close,future_return,future_return_sign))
+```
+
+#### Visualisation for the Crypto Index created
+
+```{r, warning=FALSE}
+ggplot(bitcoin_model, aes(x = date)) + 
+  geom_line(aes(y = crypto_index), colour = "red", alpha = 0.8)
+
+ggplot(bitcoin_model, aes(x = date)) + 
+  geom_line(aes(y = future_return), colour = "blue", alpha = 0.8) +
+  geom_line(aes(y = crypto_index_return), colour = "red", alpha = 0.6)
+
+```
+
+### Adjusting missing values for some features
+
+The following indicators does not have values since 2017, and there are no alternative sites that provide these data, so we will leave these out:
+
+* bchain.bcddc - Bitcoin Days Destroyed Cumulative
+* bchain.bcdde - Bitcoin Days Destroyed
+* bchain.bcddm - Bitcoin Days Destroyed Minimum Age 1 Month
+* bchain.bcddw - Bitcoin Days Destroyed Minimum Age 1 Week
+* bhcian.bcddy - Bitcoin Days Destroyed Minimum Age 1 Year
+
+This feature has an alternative site that we can take the [data](https://www.blockchain.com/charts/median-confirmation-time) from: 
+
+* bchain.atrct - Bitcoin Median Transaction Confirmation Time
+
+```{r, warning=FALSE}
+bitcoin_features <- select(bitcoin_model, -c(bchain.bcddc,bchain.bcdde,bchain.bcddm,bchain.bcddw,bchain.bcddy,bchain.atrct))
+
+# bchain.atrct - Bitcoin Median Transaction Confirmation Time
+# load in the data first
+median_confirmation_time_bitcoin <- read.csv("data/median-confirmation-time-bitcoin.csv")
+median_confirmation_time_bitcoin$ï..date <- as.Date(median_confirmation_time_bitcoin$ï..date, format="%d/%m/%Y" )
+colnames(median_confirmation_time_bitcoin) <- c("date", "bchain.atrct")
+bitcoin_features <- bitcoin_features %>% left_join(median_confirmation_time_bitcoin)
+
+```
+
+This feature missing one value on 23 May 2020
+
+* bchain.naddu - Bitcoin Number of Unique Addresses Used:
+
+```{r}
+## number obtained from blockchain website: 588174
+bitcoin_features[bitcoin_features$date=="2020-05-23", "bchain.naddu"] <- 588174
+
+```
+
+```{r}
+# hits daily and monthly 30 Nov 2020 missing, currently fill with previous day
+bitcoin_features <- bitcoin_features %>% fill(hits_daily,.direction = "down")
+bitcoin_features <- bitcoin_features %>% fill(hits_monthly,.direction = "down")
+
+```
+
+## Pre-Modelling Check
+
+Confirm if there are no missing values to prepare for models
+
+```{r, warning=FALSE}
+rmarkdown::paged_table(bitcoin_features)
+skim(bitcoin_features)
+```
+
+<u>References:</u>
+
+1. Shen D, Urquhart A, Wang P (2019) Does twitter predict Bitcoin? Econ Lett 174:118–122
+2. Poyser, O. (2017, June). Exploring the determinants of Bitcoin’s price: An application of Bayesian Structural. Retrieved from https://arxiv.org/ftp/arxiv/papers/1706/1706.01437.pdf
+3. A. (2020, April 08). Crypto trading using Bollinger Bands. Retrieved from https://academy.aaxpro.com/en/crypto-trading-using-bollinger-bands/
+4. S. (2020). %B Indicator. Retrieved from https://school.stockcharts.com/doku.php?id=technical_indicators%3Abollinger_band_perce
+5. C. (2019, April 17). Relative Strength Index (RSI) - Overview, Guide, How RSI Works. Retrieved from https://corporatefinanceinstitute.com/resources/knowledge/trading-investing/relative-strength-index-rsi/
+6. O. (2020, August 13). Top Bitcoin Price Indicators &amp; Metrics Traders Need to Know. Retrieved from https://blog.okcoin.com/2020/07/17/top-bitcoin-price-indicators-metrics-traders-need-to-know/
+7. Yu, K. (2020, January 01). Techincal Analysis with R (second edition). Retrieved from https://bookdown.org/kochiuyu/technical-analysis-with-r-second-edition/macd.html
+8. Fernando, J. (2020, December 03). Moving Average Convergence Divergence (MACD) Definition. Retrieved from https://www.investopedia.com/terms/m/macd.asp
+9. Mitchell, C. (2020, August 28). Accumulation/Distribution Indicator - A/D Definition and Uses. Retrieved from https://www.investopedia.com/terms/a/accumulationdistribution.asp
+10. Resta, M.; Pagnottoni, P.; De Giuli, M.E. Technical Analysis on the Bitcoin Market: Trading Opportunities or Investors’ Pitfall? Risks 2020, 8, 44.
+11. Mitchell, C. (2020, August 28). Price Rate Of Change Indicator - ROC. Retrieved from https://www.investopedia.com/terms/p/pricerateofchange.asp
+12. Broker, A. (2020, April 13). What is Rate-of-Change (ROC) Indicator I The Best ROC Strategy. Retrieved from https://www.ambroker.com/en/analysis/blog/what-rate-change-roc-indicator-and-how-use-trading/
+13. Trading, I. (2020, July 01). What is the Network Value to Transactions (NVT) Ratio? Retrieved from https://help.interdax.com/hc/en-001/articles/360002605137-What-is-the-Network-Value-to-Transactions-NVT-Ratio-
+14. Hayes, A. (2020, August 28). Average True Range - ATR. Retrieved from https://www.investopedia.com/terms/a/atr.asp
+15.  Zhu, Yechen; Dickinson, David; Li, Jianjun (2017) : Analysis on the
+influence factors of Bitcoin's price based on VEC model, Financial Innovation, ISSN 2199-4730,
+Springer, Heidelberg, Vol. 3, Iss. 3, pp. 1-13,
+http://dx.doi.org/10.1186/s40854-017-0054-0
+16. Oyedele, A. (2017, January 18). One country dominates the global bitcoin market. Retrieved from https://www.businessinsider.com/bitcoin-trading-china-yuan-remnibi-2017-1
+17. Gogo, J. (2020, May 07). 65% of Global Bitcoin Hashrate Concentrated in China: Mining Bitcoin News. Retrieved from https://news.bitcoin.com/65-of-global-bitcoin-hashrate-concentrated-in-china/
+18. Haig, S. (2020, May 07). A Single Chinese Region Accounts for One-Third of Global BTC Hash Rate. Retrieved from https://cointelegraph.com/news/a-single-chinese-region-accounts-for-one-third-of-global-btc-hash-rate
+19. Marshall, A. (2019, January 16). How China Influences Bitcoin Price, Explained. Retrieved from https://cointelegraph.com/explained/how-china-influences-bitcoin-price-explained
+20. McCarty, M. (2020, October 16). The Ultimate Guide To Building A Crypto Index Fund in 2020. Retrieved from https://blog.shrimpy.io/blog/cryptocurrency-index-funds-step-by-step-guide
+
+
+<u>Alternative Data Source:</u>
+
+1. https://sproutsocial.com/
+2. https://fred.stlouisfed.org/series/EFFR
+3. https://www.financialresearch.gov/financial-stress-index/
+4. https://www.investing.com/currencies/us-dollar-index
+5. https://www.blockchain.com/charts/median-confirmation-time
