@@ -33,6 +33,14 @@ library(xgboost) # Machine learning algos
 library(vip) # For constructing variable importance plots
 library(stacks) # to create stacks for ensembling
 library(caret) # for confusion matrix
+
+
+# For parallel processing
+all_cores <- parallel::detectCores(logical = FALSE)
+
+library(doParallel)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
 ```
 
 ```{r}
@@ -106,7 +114,8 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 set.seed(123)
 # Creating the models but also creating future_return in numeric form as some engines require the y variable to be a numeric
 train <- bitcoin_model %>%
-  filter(between(date, as.Date("2018-01-01"), as.Date("2020-11-29"))) #%>%
+  filter(between(date, as.Date("2018-01-01"), as.Date("2020-11-29"))) %>% na.omit()
+  #%>%
     #mutate(future_return_sign_num = as.numeric(future_return_sign) - 1)
 
 # 2020 data is kept completely out, purely for testing
@@ -147,8 +156,7 @@ resamples_cv %>%
     )
 ```
 
-# 6. Stacking
-(Include diagram here)
+# 6. Models for stacking
 
 In this section, we will define several model workflows and use `tune_grid()` for hyperparameter tuning. Unlike ordinary tuning where the best models will be selected, our approach differs.
 
@@ -333,13 +341,100 @@ null_results <- workflow() %>%
 null_results %>% collect_metrics()
 ```
 
-##
-logistic_reg
+## 6.4 Neural Networks
+```{r}
+nnet_spec <- mlp(penalty = tune(),
+                 epochs = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("nnet")
+
+# Define Workflow
+nnet_wflow <- workflow() %>%
+  add_recipe(recipe_spec) %>% 
+  add_model(nnet_spec)
+
+# Grid for tuning
+# 5^2 = 25number of nn models
+nnet_grid <- grid_regular(penalty(),
+                          epochs(),
+                          levels=5)
+
+# Perform tuning and cross-validation on training set
+nnet_results <- nnet_wflow %>%
+  tune_grid(
+    resamples = resamples_cv, 
+    grid = nnet_grid,
+    metrics = metric_set(accuracy, roc_auc, mn_log_loss),
+    control = ctrl_grid
+  )
+
+nnet_results %>% collect_metrics
+```
+
+
+## 6.5 Logistic Regression
+```{r}
+logistic_spec <- logistic_reg(penalty=tune(),
+                              mixture=tune()) %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+# Creating a parameter grid
+# grid_regular chooses sensible values for trees and min)n
+# number of total models = 5^3 = 125
+logistic_grid <- grid_regular(penalty(),
+                              mixture(),
+                              levels=5)
+
+# Creating workflow
+logistic_wflow <- workflow() %>%
+  add_model(logistic_spec) %>%
+  add_recipe(recipe_spec)
+
+# Results of the model
+logistic_results <- logistic_wflow %>%
+  tune_grid(
+    resamples = resamples_cv, 
+    grid = logistic_grid,
+    metrics = metric_set(accuracy, roc_auc),
+    control = ctrl_grid
+  )
+
+logistic_results$.metrics
+
+
+logistic_spec <- logistic_reg(penalty = tune(),
+                              mixture = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("glm")
+
+# Define Workflow
+logistic_wflow <- workflow() %>%
+  add_recipe(recipe_spec) %>% 
+  add_model(logistic_spec)
+
+# Grid for tuning
+# 5^2 = 25number of nn models
+logistic_grid <- grid_regular(penalty(),
+                              mixture(),
+                              levels=5)
+
+# Perform tuning and cross-validation on training set
+logistic_results <- logistic_wflow %>%
+  tune_grid(
+    resamples = resamples_cv, 
+    grid = logistic_grid,
+    control = ctrl_grid
+  )
+
+logistic_results %>% collect_metrics
+```
+
+## 6.6 Other Classification models
+Other classification models available in parsnips include:
 decision_tree
 bag_tree
 nearest_neighbour
-mlp (single layer neural network)
-
 
 
 
@@ -350,7 +445,7 @@ mlp (single layer neural network)
 ![](Screenshot 2020-12-04 021331.png)
 Stacking is when we add different models together into a `data_stack` object through the `add_candidates()` function.
 
-The end result is simply a tibble of different models and their predictions together with the actual y-variable we are trying to predic.
+The end result is simply a tibble of different models and their predictions together with the actual y-variable we are trying to predict.
 
 ```{r}
 # initialising the stacks
@@ -358,29 +453,25 @@ stacks()
 
 # add_candidates() adds ensemble members to the stack
 stacked_model <- stacks() %>%
+  add_candidates(xgb_model_results) %>%
+  add_candidates(svm_results) %>%
   add_candidates(rf_ranger_results) %>%
   add_candidates(rf_randomForest_results) %>%
-  add_candidates(svm_results) %>%
-  add_candidates(xgb_model_results)
-  # add_candidates(xgb_final_training_pred) %>%
-  # add_candidates(svm_accuracy_final_training_pred) %>%
-  # add_candidates(svm_roc_final_training_pred) %>%
-  # add_candidates(rf_ranger_accuracy_final_training_pred) %>%
-  # add_candidates(rf_ranger_roc_auc_final_training_pred) %>%
-  # add_candidates(rf_randomForest_accuracy_final_training_pred) %>%
-  # add_candidates(rf_randomForest_roc_auc_final_training_pred)
+  add_candidates(null_results) %>%
+  add_candidates(nnet_results) %>%
+  add_candidates(logistic_results)
 
 stacked_model
 ```
 
-Showing the rsults of the different models in the data_stack object. The first column contains actual future_return_sign (our target variable). Every other column contains the predicted values for each of the models that we have added into the stack.
+Showing the results of the different models in the data_stack object. The first column contains actual future_return_sign (our target variable). Every other column contains the predicted values for each of the models that we have added into the stack.
 
 ![](Screenshot 2020-12-04 021707.png)
 ```{r}
 as_tibble(stacked_model)
 ```
 
-First column is the actual value and the remaining columns gives the predictions for each ensemble member. Now we need to evaluate how to combine predictions together by using `blend_predictions()`. This is espeically important as ensemble members are highly correlated. Therefore the `blend_predictions()` helps to perform regulaization to figure out how the stack mamebrs can be combined. This stacking coefficeints determine which ensemble members can be used in our ensemble. Applying a lasso regression, it assigns weights to each of these models based on their predicted values in comparison to that of the actual y variable value.
+First column is the actual value and the remaining columns gives the predictions for each ensemble member. Now we need to evaluate how to combine predictions together by using `blend_predictions()`. This is espeically important as ensemble members are highly correlated. Therefore the `blend_predictions()` helps to perform regulaization to figure out how the stack mamebrs can be combined. This stacking coefficeints determine which ensemble members can be used in our ensemble. Applying a lasso regression, it assigns weights to each of these models based on their predicted values in comparison to that of the actual y variable value. Additionally, members that are very highly correlated together will not be selected. Therefore, allowing us to get the best possible mix of models for the ensemble.
 
 If stacking coefficients are non-zero, they will be included in the model.
 
@@ -395,7 +486,6 @@ stacked_model_blended #2 models were chosen at the end
 ```
 
 
-This shows the proprtions of the different models selected for the blended stack model. Generally, it should have more than 1 bar, but it still needs some tinkering with the models and the package on our end.
 ```{r}
 autoplot(stacked_model_blended, type = "weights")
 ```
@@ -411,60 +501,13 @@ stacked_model_blended_model <- stacked_model_blended %>%
   fit_members()
 ```
 
-## 7.1 Seeing model configurations
-(maybe can remove this. no idea what it means)
-```{r}
-collect_parameters(stacked_model_blended,
-                   )
-```
 
-
-# 9. Predicting with the test data
+# 8. Performance of the ensemble
 ```{r}
-test_predict <- train %>%
+train_predict <- train %>%
   bind_cols(predict(stacked_model_blended_model, .))
 
 
-confusionMatrix(factor(test_predict$.pred_class),
-                factor(test_predict$future_return_sign))
+confusionMatrix(factor(train_predict$.pred_class),
+                factor(train_predict$future_return_sign))
 ```
-
-# 9. Evaluating how the individual members performed individually
-problem: looks like SVM is carrying the entire model.
-suggestion: can just take the best of each type and throw into SVM instead of taking all possible tuning scenarios? or just use all tuning scenarios let the lasso regression choose?
-```(r)
-member_preds <-
-  test_predict %>%
-  select(future_return_sign) %>%
-  bind_cols(predict(stacked_model_blended_model, test_predict, members=TRUE))
-
-# Confusion matrix for each model
-confusionMatrix(factor(member_preds$.pred_class_xgboost_res_1_03),
-                factor(member_preds$future_return_sign))
-
-# confusionMatrix(factor(member_preds$	
-# .pred_class_svm_results_1_4),
-#                 factor(member_preds$future_return_sign))
-```
-
-# 4. Creating folds
-```(r)
-# splits into B_1,...,B_k+1 number of folds
-# "extending": 1st iteration B_1 against B_2
-# 2nd iteration: B_1+B_2 against B_3
-# last iteration: B_1 + B_2 + B_3 + .... B_K againts B_K
-
-#"moving": 1st iteration B_1 against B_2
-#2nd iteration: B_2 against B_3
-# last iteration: B_K against B_K+1
-# "extending" is chosen because the data set is relatively small and a larger in sample fold would be better.
-set.seed(123)
-folds <- create_timefolds(train$date,
-                          k=5,
-                          use_names=TRUE,
-                          type="extending")
-
-```
-
-
-
