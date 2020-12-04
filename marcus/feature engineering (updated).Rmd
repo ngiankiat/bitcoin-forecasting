@@ -1059,7 +1059,7 @@ rmarkdown::paged_table(bitcoin_features)
 skim(bitcoin_features)
 ```
 
-# *<u>References:</u>*
+# *References:*
 
 1. Shen D, Urquhart A, Wang P (2019) Does twitter predict Bitcoin? Econ Lett 174:118–122
 2. Poyser, O. (2017, June). Exploring the determinants of Bitcoin’s price: An application of Bayesian Structural. Retrieved from https://arxiv.org/ftp/arxiv/papers/1706/1706.01437.pdf
@@ -1086,7 +1086,7 @@ http://dx.doi.org/10.1186/s40854-017-0054-0
 20. McCarty, M. (2020, October 16). The Ultimate Guide To Building A Crypto Index Fund in 2020. Retrieved from https://blog.shrimpy.io/blog/cryptocurrency-index-funds-step-by-step-guide
 
 
-# *<u>Alternative Data Sources:</u>*
+# *Alternative Data Sources:*
 
 1. https://sproutsocial.com/
 2. https://fred.stlouisfed.org/series/EFFR
