@@ -25,7 +25,7 @@ The team has categorised our features into these **3 broad categories**: Sentime
 2. Reddit
 3. Twitter 
     + Sentiment analysis is not conducted due to the need to apply for twitter API, while python <code>Twint</code> can bypass this API, but when the team attempted in the usage of it, we realised there are some limitations and unstability in the scrapping of tweets using the package, so we will not proceed with it.
-    + Only gathered the total volume of tweets with regards to Bitcoin from a site
+    + Instead, we just gathered the total volume of tweets with regards to Bitcoin collected by a social media company.
 
 * <u>**Technical**</u>
 
