@@ -1,0 +1,580 @@
+---
+title: "DBA4761 Project Workflow (Dylan)"
+author: "Dylan Lawrence Han"
+date: "02/12/2020"
+output: html_document
+---
+
+# 1. Load Packages
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE,
+  comment = "#",
+  message = FALSE,
+  warning = FALSE,
+  cache = FALSE,
+  fig.align = "center",
+  class.source = 'white'
+)
+
+# Set knit directory to project directory
+knitr::opts_knit$set(root.dir = 'C:/Users/dylan/OneDrive/Documents/bitcoin-forecasting')
+```
+
+```{r}
+library(tidyverse)  # Data manipulation
+library(tidymodels) # Building machine learning workflows and models
+library(Quandl) # Download datasets
+library(tidyquant)  # Functions for collecting and analyzing financial data
+library(timetk)  # Functions to visualize, wrangle, and feature engineer time series data for forecasting and machine learning prediction
+library(xgboost) # Machine learning algos
+library(vip) # For constructing variable importance plots
+library(stacks) # to create stacks for ensembling
+library(caret) # for confusion matrix
+```
+
+```{r}
+# Set dates for this project. YMD Format.
+sDate = "2018-01-01"
+eDate = "2020-11-30"
+```
+
+
+# 2. Extracting Data/Adding features
+## 2.1 Getting Bitcoin Prices
+```{r}
+# Get Bitcoin prices from Quandl. YMD.
+# Quandl.api_key("5ydoG6gTCKjgzDpJp_1s") # 3GAtxPrAgoah7PyADPGy
+# bitcoin_price <- Quandl("BCHARTS/BITSTAMPUSD", start_date=sDate, end_date=eDate) %>%
+#   arrange(Date) %>%
+#   as_tibble()
+# colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc", "volume_currency", "weighted_price")
+# write_csv(bitcoin_price, 'data/bitcoin_price.csv')
+
+# Read Data
+bitcoin_price <- read_csv("data/bitcoin_price.csv")
+
+# Cleaning
+bitcoin_price[bitcoin_price == 0] <- NA
+# Using na.locf to fill up NA prices
+bitcoin_price <- bitcoin_price %>%
+  map_df(na.locf)
+
+# Defining Target
+bitcoin_model <- bitcoin_price %>%
+  tq_mutate(select = close,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
+            #Return logarithmic daily returns using periodReturn()
+            # use type='arithmetic' to get arithmetic return
+            col_rename = 'future_return') %>%
+  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)),
+         close = lag(close, 1),
+         date = date - days(1)) %>%
+  select(date, close, future_return, future_return_sign)
+bitcoin_model <- bitcoin_model[-1, ]  # Remove first row as the returns is zero
+
+rmarkdown::paged_table(bitcoin_model %>% head())
+```
+
+## 2.2 Getting Bitcoin Features
+```{r}
+# quandl_tidy <- function(code, name, start_date, end_date) {
+#   df <- Quandl(code, start_date = start_date, end_date = end_date) %>%
+#     mutate(code = code, name = name) %>%
+#     rename(date = Date, value = Value) %>%
+#     arrange(date) %>%
+#     as_tibble()
+#   return(df)
+# }
+# 
+# # Only shortlisted a few for simplicity. To add more.
+# code_list <- list(c("BCHAIN/TOTBC", "Total Bitcoins"),
+#                   c("BCHAIN/MKTCP", "Bitcoin Market Capitalization"),
+#                   c("BCHAIN/NADDU", "Bitcoin Number of Unique Addresses Used"),
+#                   c("BCHAIN/AVBLS", "Bitcoin Average Block Size"),
+#                   c("BCHAIN/TOUTV", "Bitcoin Total Output Volume"),
+#                   c("BCHAIN/HRATE", "Bitcoin Hash Rate"),
+#                   c("BCHAIN/MIREV", "Bitcoin Miners Revenue"))
+# 
+# bitcoin_data <- tibble()
+# 
+# # Query from Quandl and returns data in long format
+# for (i in seq_along(code_list)) {
+#   print(str_c("Downloading data for ", code_list[[i]][1], "."))
+#   bitcoin_data <- bind_rows(bitcoin_data,
+#                             quandl_tidy(code_list[[i]][1], code_list[[i]][2], sDate, eDate))
+# }
+# 
+# # Convert to wide format
+# bitcoin_data <- bitcoin_data %>%
+#   select(-name) %>%
+#   spread(code, value)
+# colnames(bitcoin_data) <- make.names(colnames(bitcoin_data))
+# 
+# write_csv(bitcoin_data, "data/bitcoin_indicators.csv")
+# 
+# bitcoin_data <- read_csv("data/bitcoin_indicators.csv")
+# bitcoin_data <- bitcoin_data[-nrow(bitcoin_data), ]  # Remove lastest date to match bitcoin prices and future returns
+```
+
+```{r}
+# Importing features from Marcus
+bitcoin_features <- read_csv("data/bitcoin_features.csv")
+bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]  # Remove lastest date to match bitcoin prices and future returns
+
+rmarkdown::paged_table(bitcoin_features %>% head())
+```
+
+
+## 2.3 Merge all data into 1 tibble
+```{r}
+# Combine price data with features
+bitcoin_model <- bitcoin_model %>%
+  left_join(bitcoin_features, by="date")
+
+rmarkdown::paged_table(bitcoin_model %>% head())
+```
+
+
+# 3. Train/Test Data Split
+```{r}
+set.seed(123)
+
+# Creating the models but also creating future_return in numeric form as some engines require the y variable to be a numeric
+train <- bitcoin_model %>%
+  filter(between(date, as.Date("2018-01-01"), as.Date("2019-12-31"))) #%>%
+    #mutate(future_return_sign_num = as.numeric(future_return_sign) - 1)
+
+# 2020 data is kept completely out, purely for testing
+test <- bitcoin_model %>%
+  filter(between(date, as.Date("2020-01-01"), as.Date("2020-11-29")))
+```
+
+#4. Create Recipe and control settings
+```{r}
+# excluding columns not used for prediction
+# a general recipe for preprocessing train data
+recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
+  update_role(date, future_return, close, new_role = "ID")
+
+# Exclude these columns from the model. Only used for ID purpose
+# a recipe to get a numeric y variable
+# train_rec_num <- recipe(future_return_sign_num ~ ., data=train) %>%
+#   update_role(date, future_return, future_return_sign, close, new_role="ID")
+
+#metric <- metric_set(rmse)
+
+# making control settings
+# ctrl_grid <- control_stack_grid()
+# ctrl_res <- control_stack_resamples()
+```
+
+# 5. Creating folds
+```{r}
+# Cross Validation Folds for Tuning. Produces 7 folds.
+resamples_cv <- train_rec %>%
+  prep() %>%
+  juice() %>% 
+  time_series_cv(
+    date_var = date,
+    initial = '3 month',  # No. of data points from original data that are in analysis (training set)
+    assess = '3 month',   # No. of data points from original data that are in assessment (testing set)
+    skip = '3 month',     # Increment of resampling data set on assessment set only.
+    cumulative = TRUE,    # TRUE, Analysis set will grow as resampling continues. Assessment set size remains static
+  )
+
+# Plot resampling timeline for each fold
+resamples_cv %>% 
+  plot_time_series_cv_plan(
+        date, close, # date variable and value variable
+        # Additional arguments passed to plot_time_series(),
+        .facet_ncol = 2,
+        .line_alpha = 0.5,
+        .interactive = FALSE,
+    )
+```
+
+# 6. Creating the workflow for models
+
+## 6.1 Tuning a xgboost model
+**Note**: Try tuning even the mytry etc
+```{r}
+xgb_model <- boost_tree(learn_rate = 0.01,
+                        tree_depth = tune(),
+                        min_n = 1,
+                        mtry = 500,
+                        trees = tune(),
+                        stop_iter = 50) %>%
+  set_engine('xgboost') %>%
+  set_mode('classification')
+
+# Workflow for the entire model
+xgb_wflw <- workflow() %>%
+  add_recipe(recipe_spec) %>%
+  add_model(xgb_model)
+
+# creating a grid to tune trees
+# number of models =5^3 = 125
+xgb_params <- grid_regular(trees(),
+                           tree_depth(),
+                           levels = 5)
+
+
+
+# Fit models at all different values chosen for each hyperparameter
+# 7 Folds. Results reported for each row.
+xgb_model_trained <- xgb_wflw %>% tune_grid(
+  grid = xgb_params,
+  metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
+  resamples = resamples_cv,
+  control = control_resamples(verbose = FALSE,
+                              save_pred = TRUE,
+                              allow_par = TRUE))
+
+
+# Display results in a tidy tibble
+# Each model would be ran using the cross-fold validation. Average performance statstics reported back.
+# Note that the cross-fold validation models are not kept. Only using cross-fold validation to calculate performance statistics for us to choose which model parameters to use.
+# no. of models x no. of metrics
+xgb_model_results <- xgb_model_trained %>% 
+  collect_metrics()
+
+# Show the top 5 candidate models
+xgb_model_trained %>% 
+  show_best("mn_log_loss")
+
+```
+
+```{r}
+# Save the best model parameters based on mn_log_loss metric
+best_params <- xgb_model_trained %>%
+  select_best('mn_log_loss', maximise = FALSE)
+
+# Defining the best model
+xgb_wflw_best <- xgb_wflw %>% 
+  finalize_workflow(best_params)
+
+# Fitting the best model
+xgb_final <- xgb_wflw_best %>%
+  fit(data=train)
+
+xgb_final
+```
+
+```{r}
+# Training set predictions
+xgb_final_training_pred <- 
+  predict(xgb_final, train) %>% 
+  # Add in predicted class probabilities
+  bind_cols(predict(xgb_final, train, type = "prob")) %>% 
+  # Add the true outcome data back in
+  bind_cols(train %>% select(future_return_sign))
+
+# Get accuracy from predicting using training set
+xgb_final_training_pred %>%
+  accuracy(truth = future_return_sign, .pred_class)
+```
+
+
+## 6.2 Naive Bayes model
+**Note**: Idk why not working
+```(r)
+library("discrim")
+nb_spec <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("naivebayes")
+
+```
+
+## 6.3 SVM model
+Support vector machines are a class of machine learning models that can be used in regression and classificaiotn. 
+## 6.3 Support vector machine
+Here we tune 2 different parameters. but end up only with 6 models. Might need to see how all different combinations can come together.
+```{r}
+# creating model specifications
+svm_spec <- svm_rbf(
+    cost=tune(),
+    rbf_sigma=tune()
+  ) %>%
+  set_engine("kernlab") %>%
+  set_mode("classification")
+
+# Creating a parameter grid
+# grid_regular chooses sensible values for cost and rbg_sigma
+# number of total models = 5*5 = 25
+svm_grid <- grid_regular(cost(),
+                         rbf_sigma(),
+                         levels=5)
+
+# Creating workflow
+svm_wflow <- workflow() %>%
+  add_model(svm_spec) %>%
+  add_recipe(train_rec)
+
+# Results of the model
+svm_results <- svm_wflow %>%
+  tune_grid(
+    resamples=resamples_cv,
+    grid=svm_grid
+  )
+
+svm_results %>%
+  collect_metrics()
+```
+
+```{r}
+# best accuracy svm and its accompanying workflow
+best_svm_accuracy <- svm_results %>%
+  select_best("accuracy")
+
+svm_wflw_best_accuracy <- svm_wflow %>%
+  finalize_workflow(best_svm_accuracy)
+
+
+# Showing the best svm model workflow for accuracy
+svm_wflw_best_accuracy
+```
+
+```{r}
+# best roc svm and its accompanying workflow
+best_svm_roc <- svm_results %>%
+  select_best("roc_auc")
+
+svm_wflw_best_roc <- svm_wflow %>%
+  finalize_workflow(best_svm_roc)
+
+# showing the best svm modelworkflow for roc
+svm_wflw_best_roc
+```
+
+### 6.3.1 Testing the SVM models
+Apply the SVM models to predict values from our training set
+
+For best roc model:
+```{r}
+svm_roc_final <- svm_wflw_best_roc %>% fit(data=train)
+
+svm_roc_final_training_pred <- predict(svm_roc_final, train) %>%
+  bind_cols(predict(svm_roc_final, train, type="prob")) %>%
+  bind_cols(train %>% select(future_return_sign))
+
+svm_roc_final_training_pred %>%
+  accuracy(truth=future_return_sign, .pred_class)
+
+```
+
+For best accuracy model:
+```{r}
+svm_accuracy_final <- svm_wflw_best_accuracy %>% fit(data=train)
+
+# contains a tibble with the predicted values of the training set.
+# Will be used to make a meta model for stacking later
+svm_accuracy_final_training_pred <- predict(svm_accuracy_final, train) %>%
+  bind_cols(predict(svm_accuracy_final, train, type="prob")) %>%
+  bind_cols(train %>% select(future_return_sign))
+
+svm_accuracy_final_training_pred %>%
+  accuracy(truth=future_return_sign, .pred_class)
+```
+
+## 6.4 Random Forest
+Usually low maintenance and perform well. Here we use ranger implementation to see how a random forest model would perform. After which we will try to use the random forest model in a stack (meta model)
+
+```{r}
+rf_spec <- rand_forest(trees = tune(),
+                       mtry=500,
+                       min_n=tune()
+                       
+  ) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+# Creating a parameter grid
+# grid_regular chooses sensible values for trees and min)n
+# number of total models = 5^3 = 125
+rf_grid <- grid_regular(trees(),
+                        min_n(),
+                        levels=5)
+
+# Creating workflow
+svm_wflow <- workflow() %>%
+  add_model(svm_spec) %>%
+  add_recipe(train_rec)
+
+# Results of the model
+svm_results <- svm_wflow %>%
+  tune_grid(
+    resamples=resamples_cv,
+    grid=svm_grid
+  )
+
+svm_results %>%
+  collect_metrics()
+
+```
+## 6.4 Null model
+A [null model](https://smltar.com/mlclassification.html#classfirstattemptlookatdata) or a baseline model is a simple, non-informative model that always predicts the largest class for classification. Such a model is perhaps the simplest heuristics or rull-based alternative that we can consider as we assess our modelling efforts.
+```{r}
+null_classification <- null_model() %>%
+  set_engine("parsnip") %>%
+  set_mode("classification")
+
+null_rs <- workflow() %>%
+  add_recipe(recipe_spec) %>%
+  add_model(null_classification) %>%
+  fit_resamples(
+    resamples_cv
+  )
+
+# results of a null model
+null_rs %>% collect_metrics()
+```
+
+
+## 6.2 Linear regression model
+Can also tune parameters but haven tried. penalty etc. tune first then put it in later and enemble only the best? or just put all inside the stack withnout choosing which tune is the best.
+
+Note: can play around with the different stuff like engine and modes. 
+
+**problem**: lm cannot take so many variables. might need to just pick the important ones based on the importance score done by lester.
+```{r}
+# lasso
+lin_reg_spec <- linear_reg() %>%
+  set_engine("lm") %>%   #should i change engine?
+  set_mode("regression")
+
+lin_reg_wflow <- workflow() %>%
+  add_model(lin_reg_spec) %>%
+  add_recipe(train_rec_num)
+
+# fitting the model
+lin_reg_results <- fit_resamples(
+  lin_reg_wflow,
+  resamples = resamples_cv,
+  control = ctrl_res
+)
+
+lin_reg_results$.notes
+```
+
+
+
+
+# 7. stacking
+![](Screenshot 2020-12-04 021331.png)
+Stacking is when we add different models together into a `data_stack` object through the `add_candidates()` function.
+
+The end result is simply a tibble of different models and their predictions together with the actual y-variable we are trying to predic.
+
+```{r}
+# initialising the stacks
+stacks()
+
+# add_candidates() adds ensemble members to the stack
+stacked_model <-
+  stacks() %>%
+  add_candidates(xgboost_results) %>%
+  add_candidates(svm_results) %>%
+  #add_candidates(lin_reg_results )
+
+stacked_model
+```
+
+Showing the rsults of the different models in the data_stack object. The first column contains actual future_return_sign (our target variable). Every other column contains the predicted values for each of the models that we have added into the stack.
+
+![](Screenshot 2020-12-04 021707.png)
+```{r}
+as_tibble(stacked_model)
+```
+
+First column is the actual value and the remaining columns gives the predictions for each ensemble member. Now we need to evaluate how to combine predictions together by using `blend_predictions()`. This is espeically important as ensemble members are highly correlated. Therefore the `blend_predictions()` helps to perform regulaization to figure out how the stack mamebrs can be combined. This stacking coefficeints determine which ensemble members can be used in our ensemble. Applying a lasso regression, it assigns weights to each of these models based on their predicted values in comparison to that of the actual y variable value.
+
+If stacking coefficients are non-zero, they will be included in the model.
+
+![](Screenshot 2020-12-04 021856.png)
+
+
+```{r}
+stacked_model_blended <- stacked_model %>%
+  blend_predictions()
+
+stacked_model_blended #2 models were chosen at the end
+```
+
+
+This shows the proprtions of the different models selected for the blended stack model. Generally, it should have more than 1 bar, but it still needs some tinkering with the models and the package on our end.
+```{r}
+autoplot(stacked_model_blended, type = "weights")
+```
+
+We can use autoplot to see if got the right trade off.
+```{r}
+autoplot(stacked_model_blended)
+```
+
+Fitting the different members of the ensemble into the model.
+```{r}
+stacked_model_blended_model <- stacked_model_blended %>%
+  fit_members()
+```
+
+## 7.1 Seeing model configurations
+(maybe can remove this. no idea what it means)
+```{r}
+collect_parameters(stacked_model_blended,
+                   "svm_results")
+
+```
+
+
+# 9. Predicting with the test data
+```{r}
+test_predict <- test %>%
+  bind_cols(predict(stacked_model_blended_model, .))
+
+
+confusionMatrix(factor(test_predict$.pred_class),
+                factor(test_predict$future_return_sign))
+```
+
+# 9. Evaluating how the individual members performed individually
+problem: looks like SVM is carrying the entire model.
+suggestion: can just take the best of each type and throw into SVM instead of taking all possible tuning scenarios? or just use all tuning scenarios let the lasso regression choose?
+```(r)
+member_preds <-
+  test_predict %>%
+  select(future_return_sign) %>%
+  bind_cols(predict(stacked_model_blended_model, test_predict, members=TRUE))
+
+# Confusion matrix for each model
+confusionMatrix(factor(member_preds$.pred_class_xgboost_res_1_03),
+                factor(member_preds$future_return_sign))
+
+# confusionMatrix(factor(member_preds$	
+# .pred_class_svm_results_1_4),
+#                 factor(member_preds$future_return_sign))
+```
+
+# 4. Creating folds
+```(r)
+# splits into B_1,...,B_k+1 number of folds
+# "extending": 1st iteration B_1 against B_2
+# 2nd iteration: B_1+B_2 against B_3
+# last iteration: B_1 + B_2 + B_3 + .... B_K againts B_K
+
+#"moving": 1st iteration B_1 against B_2
+#2nd iteration: B_2 against B_3
+# last iteration: B_K against B_K+1
+# "extending" is chosen because the data set is relatively small and a larger in sample fold would be better.
+set.seed(123)
+folds <- create_timefolds(train$date,
+                          k=5,
+                          use_names=TRUE,
+                          type="extending")
+
+```
+
+
+
