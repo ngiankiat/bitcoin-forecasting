@@ -92,6 +92,9 @@ bitcoin_features <- read_csv("data/bitcoin_features.csv")
 # Add sentiment features from reddit (Darren)
 bitcoin_features <- bitcoin_features %>% 
   left_join(read_csv("data/bitcoin_reddit.csv"), by="date")
+# Add sentiment features from news sites (QL)
+bitcoin_features <- bitcoin_features %>% 
+  left_join(read_csv("data/bitcoin_news.csv") %>% mutate(date = as.Date(date, format = "%d/%m/%y")), by="date")
 
 # Remove lastest date to match bitcoin prices and future returns
 bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]
@@ -111,6 +114,7 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 
 
 # 3. Train/Test Data Split
+![](lester/img/resampling.png)
 ```{r}
 set.seed(123)
 # YMD format
@@ -127,7 +131,7 @@ recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
 
 # 5. Create resamples from cross validation folds of 3 months
 ```{r}
-# Cross Validation Folds for Tuning. Produces 7 folds.
+# Cross Validation Folds for Tuning. Produces 9 slices
 resamples_cv <- recipe_spec %>%
   prep() %>%
   juice() %>% 
@@ -151,8 +155,8 @@ resamples_cv %>%
 
 # 6. Define Model
 ```{r}
-xgb_model <- boost_tree(learn_rate = 0.01,
-                        tree_depth = 1,
+rf_model <- boost_tree(learn_rate = 0.01,
+                        tree_depth = 10,
                         min_n = 1,
                         mtry = 500,
                         trees = tune(),
@@ -160,24 +164,24 @@ xgb_model <- boost_tree(learn_rate = 0.01,
   set_engine('xgboost') %>%
   set_mode('classification')
 
-xgb_model
+rf_model
 ```
 
 # 7. Create Workflow
 ```{r}
-xgb_wflw <- workflow() %>%
+rf_wflw <- workflow() %>%
   add_recipe(recipe_spec) %>%
-  add_model(xgb_model)
+  add_model(rf_model)
 
-xgb_wflw
+rf_wflw
 ```
 
 # 8. Tuning
 ## 8.1 Create grid for tuning.
 ```{r}
 # Create grid. Create 10 models.
-xgb_params <- grid_max_entropy(trees(), size = 10)
-xgb_params
+rf_params <- grid_max_entropy(trees(), size = 10)
+rf_params
 ```
 
 ## 8.2 Model Tuning with a Grid
@@ -186,8 +190,8 @@ xgb_params
 # Each row represents one fold
 # In each fold, no. of models x no. of metrics
 # In each fold, for .predictions, no. of models x length of test data
-xgb_model_trained <- xgb_wflw %>% tune_grid(
-  grid = xgb_params,
+rf_model_trained <- rf_wflw %>% tune_grid(
+  grid = rf_params,
   metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
   resamples = resamples_cv,
   control = control_resamples(verbose = FALSE,
@@ -198,62 +202,63 @@ xgb_model_trained <- xgb_wflw %>% tune_grid(
 # Each model would be ran using the cross-fold validation. Average performance statstics reported back.
 # Note that the cross-fold validation models are not kept. Only using cross-fold validation to calculate performance statistics for us to choose which model parameters to use.
 # no. of models x no. of metrics
-xgb_model_results <- xgb_model_trained %>% 
+rf_model_results <- rf_model_trained %>% 
   collect_metrics()
 
 # Show the top 5 candidate models
-xgb_model_trained %>% 
-  show_best("mn_log_loss")
+rf_model_trained %>% 
+  show_best("accuracy")
 
 # Save the best model parameters based on mn_log_loss metric
-best_params <- xgb_model_trained %>%
+best_params <- rf_model_trained %>%
   select_best('mn_log_loss', maximise = FALSE)
 ```
 
 # 9. Finalize workflow with the best model parameters
 ```{r}
-xgb_wflw_best <- xgb_wflw %>% 
+rf_wflw_best <- rf_wflw %>% 
   finalize_workflow(best_params)
 
-xgb_wflw_best
+rf_wflw_best
 ```
 
-# 10. Fitting final model to training data
+# 10. Fit final model to training data
 ```{r}
-xgb_final <- 
-  xgb_wflw_best %>%
+rf_final <- 
+  rf_wflw_best %>%
   fit(data = train)
 
-print(xgb_final)
-
 # Training set predictions
-xgb_final_training_pred <- 
-  predict(xgb_final, train) %>% 
+rf_final_training_pred <- 
+  predict(rf_final, train) %>% 
   # Add in predicted class probabilities
-  bind_cols(predict(xgb_final, train, type = "prob")) %>% 
+  bind_cols(predict(rf_final, train, type = "prob")) %>% 
   # Add the true outcome data back in
   bind_cols(train %>% select(future_return_sign))
 
-# Get accuracy from predicting using training set
-xgb_final_training_pred %>%
-  accuracy(truth = future_return_sign, .pred_class)
+# Confusion Matrix for Random Forest
+confusionMatrix(factor(rf_final_training_pred$.pred_class),
+                factor(rf_final_training_pred$future_return_sign))
 
 ```
 
 # 11. Extracting and Visualizing variable importance
+bchain.naddu:  Bitcoin Number of Unique Addresses Used  
+nvt:  NVT Ratio (Network Value to Transactions Ratio)  
+bchain.atrct:  Bitcoin Median Transaction Confirmation Time  
 ```{r}
 # Extract model object from final workflow. 
 # Visualise variable importance using vip()
-xgb_final %>% 
+rf_final %>% 
   pull_workflow_fit() %>% 
   vip()
 ```
 
-# 12. Fit Model with Resampling instead of training on the whole train set.
+# 12. Fit Model with Resampling (on Training Set)
 ```{r}
 # Used as an alternative to measuring the model's performance
-# 7 Folds from previously defined resamples
-xgb_resampling <- xgb_wflw_best %>%
+# 9 Folds from previously defined resamples
+rf_resampling <- rf_wflw_best %>%
   fit_resamples(
     resamples = resamples_cv,
     control   = control_resamples(
@@ -262,7 +267,7 @@ xgb_resampling <- xgb_wflw_best %>%
       allow_par = TRUE))  # Allow parallel processing
 
 # Return the average performance of the model based on training and testing different folds
-xgb_resampling %>% collect_metrics()
+rf_resampling %>% collect_metrics()
 
 ```
 
@@ -270,58 +275,135 @@ xgb_resampling %>% collect_metrics()
 ```{r}
 # Testing set predictions
 # Using the model that was trained with all the training data and fitting onto the never seen before test data
-xgb_final_testing_pred <- 
-  predict(xgb_final, test) %>% 
+rf_final_testing_pred <- 
+  predict(rf_final, test) %>% 
   # Add in predicted class probabilities
-  bind_cols(predict(xgb_final, test, type = "prob")) %>% 
+  bind_cols(predict(rf_final, test, type = "prob")) %>% 
   # Add the true outcome data back in
   bind_cols(test %>% select(future_return_sign))
 
 # Get accuracy from predicting using testing set
-xgb_final_testing_pred %>%
-  accuracy(truth = future_return_sign, .pred_class)
+# Confusion Matrix for Random Forest
+confusionMatrix(factor(rf_final_testing_pred$.pred_class),
+                factor(rf_final_testing_pred$future_return_sign))
 ```
 
 
-# 14. Evaluating Model
+# 14. Evaluating Models
 ## 14.1 Computing Returns from the Model.  
 Strategy 1: Buy and Hold  
-Strategy 2: Using the model's predicted signal to buy/sell at the closing price  
+Strategy 2: Using time series model - Prophet
+Strategy 3: Using Random Forest, XGBoost
+
 ```{r}
-# Train and Test set predictions
-# Using the model that was trained with all the training data and fitting onto the entire dataset
-xgb_final_full_pred <- bitcoin_model %>% 
+# Function to compute returns
+computeReturns <- function(base, predicted){
+  overall <- base %>% 
+    bind_cols(predicted) %>% 
+    mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
+           return_model = cumprod(1 + future_return * pred_signal - trading_cost))
+  return(overall$return_model)
+}
+
+# Base Model
+base_model <- test %>% 
   select(date, close, future_return_sign, future_return) %>% 
-  # Add in predicted
-  bind_cols(predict(xgb_final, bitcoin_model)) %>% 
+  mutate(return_buyhold = cumprod(1 + future_return),
+         signal_buyhold = 1)
+
+# Time Series
+prophet_predict <- read_csv("data/prophet_signals.csv") %>% select(-date)
+
+# rf Prediction on Test Set
+rf_predict <- predict(rf_final, test) %>% 
   rename(pred_signal = .pred_class) %>% 
-  mutate_at("pred_signal", ~as.numeric(as.character(.))) %>%  # Convert factor to binary integer
-  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
-         return_buyhold = cumprod(1 + future_return),
-         return_model = cumprod(1 + future_return * pred_signal - trading_cost))
+  mutate_at("pred_signal", ~as.numeric(as.character(.)))
+
+all_models <- base_model %>% 
+  mutate(signal_prophet = prophet_predict$pred_signal,
+         return_prophet = computeReturns(base_model, prophet_predict),
+         signal_rf = rf_predict$pred_signal,
+         return_rf = computeReturns(base_model, rf_predict))
+
+rmarkdown::paged_table(all_models %>% head())
 ```
 
 ## 14.2 Visualisations
 ```{r}
 # Plot predicted buy/sell signal on price data
-xgb_final_full_pred %>% 
-  ggplot(aes(x = date, y = close, color = pred_signal)) + 
+# See differences between models
+prophet_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_prophet)) +
     geom_line() +
     theme_light()
+rf_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_rf)) +
+    geom_line() +
+    theme_light()
+grid.arrange(prophet_plot, rf_plot, nrow = 1)
+```
 
-# Comparing buyhold v model returns
-xgb_final_full_pred %>% 
-  select(date, return_buyhold, return_model) %>% 
+```{r}
+# Comparing returns across strategies
+all_models %>% 
+  select(date, return_buyhold, return_prophet, return_rf) %>% 
   gather(key = "strategy", value = "returns", -date) %>% 
   ggplot(aes(x=date, y = returns)) +
     geom_line(aes(color = strategy)) +
     theme_light()
 ```
 
+
 ## 14.3 Descriptive Statistics
+### 14.3.1 Confusion Matrix
 ```{r}
-# Confusion Matrix
-confusionMatrix(factor(xgb_final_full_pred$pred_signal),
-                factor(xgb_final_full_pred$future_return_sign))
+# Confusion Matrix for Prohphet
+print(confusionMatrix(factor(all_models$signal_prophet),
+                factor(all_models$future_return_sign)))
+
+# Confusion Matrix for Random Forest
+print(confusionMatrix(factor(all_models$signal_rf),
+                factor(all_models$future_return_sign)))
 ```
+
+### 14.3.2 Overall Returns
+```{r}
+all_returns <- all_models %>% 
+  select(date, return_buyhold, return_prophet, return_rf) %>% 
+  gather(key = "strategy", value = "returns", -date) %>% 
+  group_by(strategy) %>% 
+  summarise_all(last)
+
+rmarkdown::paged_table(all_returns)
+```
+
+### 14.3.3 Mean Daily Returns and SD
+```{r}
+# Daily Returns
+all_models_performance <- all_models %>% 
+  select(date, future_return, signal_buyhold, signal_prophet, signal_rf) %>% 
+  gather(key = "strategy", value = "daily_returns", -c(date, future_return)) %>% 
+  mutate_at("daily_returns", ~.*future_return) %>% 
+  group_by(strategy) %>% 
+  summarise(d_ret = mean(daily_returns), d_sd = sd(daily_returns))
+
+rmarkdown::paged_table(all_models_performance)
+```
+
+### 14.3.4 Annualised Returns and SD
+```{r}
+all_models_performance <- all_models_performance %>% 
+  mutate(ann_ret = (1+d_ret)^365 - 1,
+         ann_sd = d_sd * 365 ^ 0.5)
+rmarkdown::paged_table(all_models_performance)
+```
+
+
+### 14.3.4 Sharpe Ratio
+```{r}
+all_models_performance <- all_models_performance %>% 
+  # Minus risk-free rate. T-bills
+  mutate(ann_sharpe = ann_ret-0.0011/ann_sd)
+
+rmarkdown::paged_table(all_models_performance)
+```
+
 

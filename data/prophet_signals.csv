@@ -1,4 +1,4 @@
-date,prophet_pred_signal
+date,pred_signal
 1/7/20,1
 2/7/20,0
 3/7/20,1
@@ -151,4 +151,3 @@ date,prophet_pred_signal
 27/11/20,0
 28/11/20,0
 29/11/20,0
-30/11/20,0
