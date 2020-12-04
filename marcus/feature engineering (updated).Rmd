@@ -1086,10 +1086,12 @@ http://dx.doi.org/10.1186/s40854-017-0054-0
 20. McCarty, M. (2020, October 16). The Ultimate Guide To Building A Crypto Index Fund in 2020. Retrieved from https://blog.shrimpy.io/blog/cryptocurrency-index-funds-step-by-step-guide
 
 
-# *Alternative Data Sources:*
+# *Data Sources:*
 
-1. https://sproutsocial.com/
-2. https://fred.stlouisfed.org/series/EFFR
-3. https://www.financialresearch.gov/financial-stress-index/
-4. https://www.investing.com/currencies/us-dollar-index
-5. https://www.blockchain.com/charts/median-confirmation-time
+1. Yahoo Finance
+2. Quandl
+1. Twitter Volume Data: https://sproutsocial.com/
+2. Fed Funds Rate Data: https://fred.stlouisfed.org/series/EFFR
+3. FSI Data: https://www.financialresearch.gov/financial-stress-index/
+4. US Dollar Index Data: https://www.investing.com/currencies/us-dollar-index
+5. Median Confirmation Time Data: https://www.blockchain.com/charts/median-confirmation-time
