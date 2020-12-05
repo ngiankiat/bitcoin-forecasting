@@ -149,18 +149,28 @@ rmarkdown::paged_table(all_models %>% head())
 ## 14.2 Visualisations for 
 ```{r}
 # Plot predicted buy/sell signal on price data
-# See differences between models
-prophet_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_prophet)) +
+# Plot for Prophet
+all_models %>% ggplot(aes(x = date, y = close, color = signal_prophet)) +
     geom_line() +
     theme_light()
-xbg_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_xgb)) +
-    geom_line() +
-    theme_light()
-ensemble_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_ensemble)) +
-    geom_line() +
-    theme_light()
-grid.arrange(prophet_plot, xbg_plot, ensemble_plot, ncol = 1)
 ```
+
+```{r}
+# Plot for xgb
+all_models %>% ggplot(aes(x = date, y = close, color = signal_xgb)) +
+    geom_line() +
+    theme_light()
+```
+
+```{r}
+# Plot for ensemble
+all_models %>% ggplot(aes(x = date, y = close, color = signal_ensemble)) +
+    geom_line() +
+    theme_light()
+```
+
+
+
 
 ```{r}
 # Comparing returns across strategies
