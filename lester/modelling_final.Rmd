@@ -12,8 +12,10 @@ output:
       collapsed: yes
       smooth_scroll: no
 editor_options:
-  chunk_output_type: console
+  chunk_output_type: inline
 ---
+
+In this section, we create a machine learning model to predict the direction of change in Bitcoin prices. The predictors we use are the ones we have created with feature engineering.
 
 # 1. Load Packages
 ```{r setup, include = FALSE}
@@ -49,6 +51,9 @@ eDate = "2020-11-30"
 ```
 
 # 2. Extracting Data/Adding features
+
+We start by importing the Bitcoin prices as well as the features we have prepared in the data folder.
+
 ## 2.1 Getting Bitcoin Prices
 ```{r}
 # Get Bitcoin prices from Quandl. YMD.
@@ -60,7 +65,7 @@ eDate = "2020-11-30"
 # write_csv(bitcoin_price, 'data/bitcoin_price.csv')
 
 # Read Data
-bitcoin_price <- read_csv("data/bitcoin_price.csv")
+bitcoin_price <- read_csv("../data/bitcoin_price.csv")
 
 # Cleaning
 bitcoin_price[bitcoin_price == 0] <- NA
@@ -88,13 +93,13 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 ## 2.2 Getting Bitcoin Features
 ```{r}
 # Importing features from online sources (Marcus)
-bitcoin_features <- read_csv("data/bitcoin_features.csv")
+bitcoin_features <- read_csv("../data/bitcoin_features.csv")
 # Add sentiment features from reddit (Darren)
 bitcoin_features <- bitcoin_features %>% 
-  left_join(read_csv("data/bitcoin_reddit.csv"), by="date")
+  left_join(read_csv("../data/bitcoin_reddit.csv"), by="date")
 # Add sentiment features from news sites (QL)
 bitcoin_features <- bitcoin_features %>% 
-  left_join(read_csv("data/bitcoin_news.csv") %>% mutate(date = as.Date(date, format = "%d/%m/%y")), by="date")
+  left_join(read_csv("../data/bitcoin_news.csv") %>% mutate(date = as.Date(date, format = "%d/%m/%y")), by="date")
 
 # Remove lastest date to match bitcoin prices and future returns
 bitcoin_features <- bitcoin_features[-nrow(bitcoin_features), ]
@@ -117,7 +122,10 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 
 
 # 3. Train/Test Data Split
-![](lester/img/resampling.png)
+
+Similar to the time series model, we will be using Bitcoin price data from January 2018 to June 2020 as the training data, and price data from July to November 2020 as the test data. 
+
+![](img/resampling.png)
 ```{r}
 # YMD format
 train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
@@ -125,6 +133,9 @@ test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2
 ```
 
 # 4. Create Recipe
+
+In the first step of our `tidymodels` workflow, we start with the recipe. Since we are trying to predict the direction of the change in Bitcoin prices, we will set the "future_return_sign" column as the target variable, and all other columns as the predictors.
+
 ```{r}
 # Recipe using the train set
 recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
@@ -133,6 +144,9 @@ recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
 ```
 
 # 5. Create resamples from cross validation folds of 3 months for tuning
+
+Next, we create resamples of the training data for cross-validation. We set a 3-month window for resmaples, such that the model can be tuned every 3 months. This simulates our model being updated every 3 months in response to changing conditions.
+
 ```{r}
 # Cross Validation Folds for Tuning. Produces 9 slices
 resamples_train <- recipe_spec %>%
@@ -157,6 +171,9 @@ resamples_train %>%
 ```
 
 # 6. Define Model
+
+We chose a XGBoost model because of it reduces variance and bias. Each model is trained based on the the previous model's residuals, which prevents overfitting to the training data.
+
 ```{r}
 rf_model <- boost_tree(learn_rate = 0.01,
                         tree_depth = tune(),
@@ -171,6 +188,9 @@ rf_model
 ```
 
 # 7. Create Workflow
+
+With the receipe and model ready, we can start creating our workflow according to the `tidymodels` framework.
+
 ```{r}
 rf_wflw <- workflow() %>%
   add_recipe(recipe_spec) %>%
@@ -180,6 +200,9 @@ rf_wflw
 ```
 
 # 8. Tuning
+
+We perform hyperparamter tuning for the "tree_depth" and "min_n" parameters to explore different XGBoost models to come up with one that gives the most accurate predictions after cross-validation.
+
 ## 8.1 Create grid for tuning.
 ```{r}
 # Create grid. Create 5^2 = 25 models.
@@ -213,6 +236,9 @@ best_params <- rf_model_trained %>%
 ```
 
 # 9. Finalize workflow with the best model parameters
+
+After the hyperparameter tuning is done, we set aside the best XGBoost model to use for prediction.
+
 ```{r}
 rf_wflw_best <- rf_wflw %>% 
   finalize_workflow(best_params)
@@ -221,6 +247,9 @@ rf_wflw_best
 ```
 
 # 10. Fit final model to training data
+
+We fit the best XGBoost model to the training data and examine the accuracy of its predictions on the training data. As observed from the confusion matrix below, the model is good at predicting the direction of Bitcoin price movements between January 2018 and June 2020, with a 76% prediction accuracy. This should come as no surprise since the model has already "seen" the data.
+
 ```{r}
 rf_final <- 
   rf_wflw_best %>%
@@ -241,6 +270,9 @@ confusionMatrix(factor(rf_final_training_pred$.pred_class),
 ```
 
 # 11. Extracting and visualizing variable importance
+
+We visualise the importance of 
+
 ```{r}
 # Extract model object from final workflow. 
 # Visualise variable importance using vip()
@@ -249,9 +281,12 @@ rf_final %>%
   vip()
 ```
 
-# 13. Test Date
-Fitting final model to testing data
-Plot confusion matrix and save results
+# 13. Test Data
+
+The real test of our model's performance would be the accuracy of its predictions on test data. We fit the final model to the test data from July to November 2020 and plotted the confusion matrix.
+
+Although we observe an expected decrease in prediction accuracy from training to testing data, the 43% accuracy is still quite reasonable.
+
 ```{r}
 # Testing set predictions
 # Using the model that was trained with all the training data and fitting onto the never seen before test data
@@ -265,10 +300,13 @@ rf_final_testing_pred <- test %>%
 confusionMatrix(factor(rf_final_testing_pred$pred_class),
                 factor(rf_final_testing_pred$future_return_sign))
 
-write_csv(rf_final_testing_pred %>% select(-future_return_sign), "data/xgboost_signals.csv")
+write_csv(rf_final_testing_pred %>% select(-future_return_sign), "../data/xgboost_signals.csv")
 ```
 
 # 14. Resampling (on Entire Set)
+
+We perform another round of resampling, this time using 1-month intervals. 
+
 ## 14.1 Define resamples from train + test
 ```{r}
 # Define resamples over entire set. Produces 12 splits.
@@ -306,7 +344,7 @@ rf_resampling %>%
 
 ## 14.3 Extracting and Visualizing variable importance
 See changes in variable importance overtime.
-![](lester/img/resampling_final.png)
+![](img/resampling_final.png)
 ```{r}
 # Plot variable importance of each split
 library(gridExtra)
