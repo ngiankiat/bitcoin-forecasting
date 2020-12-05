@@ -807,12 +807,23 @@ bitcoin_model <- bitcoin_model %>% fill(effr,.direction = "down")
 ```
 
 ### **S&P500**
+
+* It is considered because it might have an impact on Bitcoin. E.g. 12 March 2020, the price of Bitcoin fell below USD 4,000 after a sharp decline in the S&P500 Index in the U.S.
+
 ```{r, warning=FALSE}
 sp500 <- get_yahoo('^GSPC') %>%
   select(date, sp500 = adjusted_close)
+
 bitcoin_model <- bitcoin_model %>% left_join(sp500)
-# fill na downwards for weekend missing values - fill with fri closing price
-bitcoin_model <- bitcoin_model %>% fill(sp500, .direction = "down")
+
+bitcoin_model <- bitcoin_model %>% fill(sp500,.direction = "down")
+
+# Include s&p500 returns into the model as well
+bitcoin_model <- bitcoin_model %>% tq_mutate(select = sp500,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',                            
+            col_rename = 'sp500_returns')
 
 ```
 
@@ -994,7 +1005,7 @@ mkt_cap_total <- mkt_cap_total %>% mutate(crypto_index = sqrt_sum_mkt_cap/diviso
 crypto_index <- mkt_cap_total %>% tq_mutate(select = crypto_index,
             mutate_fun = periodReturn,
             period = 'daily',
-            type = 'log',                            
+            type = 'arithmetic',                            
             col_rename = 'crypto_index_return')
 
 # we will add the returns of index and index into the model
@@ -1031,12 +1042,12 @@ Comparing to the Bitwise Select 10 Large Cap Crypto Index
 index_bitx <- read.csv("data/index_bitx.csv")
 index_bitx$date <- as.Date(index_bitx$date, format="%B %d %Y")
 
-multiple_crypto_indexes_2 <- crypto_index_df %>% left_join(index_bitx)
+multiple_crypto_indexes <- crypto_index_df %>% left_join(index_bitx)
 
-ggplot(multiple_crypto_indexes_2, aes(x = date)) + 
-  geom_line(aes(y = crypto_index, colour = "Our Crypto Index")) +
+ggplot(multiple_crypto_indexes, aes(x = date)) + 
+  geom_line(aes(y = crypto_index, colour = "Our Crypto Index")) + ylab("Own Index") +
   geom_line(aes(y = bitx/200,colour = "KEYS:SW")) +
-  scale_y_continuous(sec.axis = sec_axis(~.*200, name = "Title"))
+  scale_y_continuous(sec.axis = sec_axis(~.*200, name = "Bitwise Index"))
 
 ```
 
@@ -1090,6 +1101,7 @@ Confirm if there are no missing values to prepare for models
 ```{r, warning=FALSE}
 rmarkdown::paged_table(bitcoin_features)
 skim(bitcoin_features)
+
 ```
 
 # *References:*
