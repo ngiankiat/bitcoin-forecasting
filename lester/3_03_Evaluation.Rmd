@@ -1,6 +1,5 @@
 ---
 title: "Evaluating Models"
-author: "Lester Sim"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -67,7 +66,6 @@ ensemble_predict <- read_csv("data/ensemble_predict_updated.csv") %>%
 ```
 
 # 3. Import Test Data
-Follow the definition of test data
 ```{r}
 # Read Data
 bitcoin_price <- read_csv("data/bitcoin_price.csv")
@@ -125,6 +123,7 @@ computeReturns <- function(base, predicted){
     left_join(predicted, by="date") %>%
     mutate(trading_cost = abs(pred_class - lag(pred_class, n = 1, default = 0)) * 0.003,
            return_model = cumprod(1 + future_return * pred_class - trading_cost))
+
   return(overall$return_model)
 }
 
@@ -168,6 +167,9 @@ all_models %>% ggplot(aes(x = date, y = close, color = signal_ensemble)) +
 ```
 
 # 7. Comparing returns across different models
+Plotting the various returns of the different strategies (predicted on test date), we are able to see that the ensemble model has the best returns, followed by the buy-and-hold strategy, XGBoost and Time-Series (Prophet).
+
+The advantage of the ensemble model helps to exploit the strengths of each model. By regressing on the predicted probabilities across all the models, we can put more weight on models that have better predictions, but have other models be stronger in areas where a certain model could be weaker.
 
 ```{r}
 all_models %>% 
@@ -180,7 +182,8 @@ all_models %>%
 
 
 # 8. Descriptive Statistics
-# 8.1 Confusion Matrix
+## 8.1 Confusion Matrix
+The ensemble model was able to produce the highest accuracy at 82% compared to the other models. The high accuracy of the ensemble model would perhaps explain the higher returns as the model predicts the best time to buy/sell bitcoins as compared to a buy-and-hold strategy.
 ```{r}
 # Confusion Matrix for Prohphet
 print(confusionMatrix(factor(all_models$signal_prophet),
@@ -195,7 +198,8 @@ print(confusionMatrix(factor(all_models$signal_ensemble),
                 factor(all_models$future_return_sign)))
 ```
 
-# 8.2 Overall Returns
+## 8.2 Overall Returns
+Buy and hold strategy still generates the highest returns. This is probably because of the recent spike in prices due to the large inflow of funds into cryptocurrency by institutions (eg. Paypal, Robinhood).  
 ```{r}
 all_returns <- all_models %>% 
   select(date, return_buyhold, return_prophet, return_xgb, return_ensemble) %>%
@@ -206,7 +210,7 @@ all_returns <- all_models %>%
 rmarkdown::paged_table(all_returns)
 ```
 
-# 8.3 Mean Daily Returns and SD
+## 8.3 Mean Daily Returns and SD
 ```{r}
 # Daily Returns
 all_models_performance <- all_models %>% 
@@ -219,7 +223,7 @@ all_models_performance <- all_models %>%
 rmarkdown::paged_table(all_models_performance)
 ```
 
-### 14.3.4 Annualised Returns and SD
+## 8.4 Annualised Returns and SD
 ```{r}
 all_models_performance <- all_models_performance %>% 
   mutate(ann_ret = (1+d_ret)^365 - 1,
@@ -228,7 +232,7 @@ all_models_performance <- all_models_performance %>%
 rmarkdown::paged_table(all_models_performance)
 ```
 
-### 14.3.4 Sharpe Ratio
+## 8.5 Sharpe Ratio
 ```{r}
 all_models_performance <- all_models_performance %>% 
   # Minus risk-free rate. T-bills
