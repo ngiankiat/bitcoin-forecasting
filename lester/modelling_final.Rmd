@@ -110,6 +110,9 @@ rmarkdown::paged_table(bitcoin_features %>% head())
 bitcoin_model <- bitcoin_model %>%
   left_join(bitcoin_features, by="date")
 
+rm(bitcoin_features)
+rm(bitcoin_price)
+
 rmarkdown::paged_table(bitcoin_model %>% head())
 ```
 
@@ -117,38 +120,35 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 # 3. Train/Test Data Split
 ![](lester/img/resampling.png)
 ```{r}
-set.seed(123)
 # YMD format
-# No train/test split
-# train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
-# test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-29")))
+train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
+test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-29")))
 ```
 
 # 4. Create Recipe
 ```{r}
-# Recipe using the whole dataset
-recipe_spec <- recipe(future_return_sign ~ ., data = bitcoin_model) %>%
+# Recipe using the train set
+recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
   update_role(date, future_return, close, new_role = "ID") # Exclude these columns from the model. Only used for ID purpose
 
 ```
 
-# 5. Create resamples from cross validation folds of 3 months
+# 5. Create resamples from cross validation folds of 3 months for tuning
 ```{r}
 # Cross Validation Folds for Tuning. Produces 9 slices
-resamples_cv <- recipe_spec %>%
+resamples_train <- recipe_spec %>%
   prep() %>%
   juice() %>% 
   time_series_cv(
     date_var = date,
-    # initial = '3 month',  # No. of data points from original data that are in analysis (training set)
-    assess = '1 month',   # No. of data points from original data that are in assessment (testing set)
-    skip = '1 month',     # Increment of resampling data set on assessment set only.
-    slice_limit = 12,    # Ie. num of folds
+    initial = '3 month',  # No. of data points from original data that are in analysis (training set)
+    assess = '3 month',   # No. of data points from original data that are in assessment (testing set)
+    skip = '3 month',     # Increment of resampling data set on assessment set only.
     cumulative = TRUE    # TRUE, Analysis set will grow as resampling continues. Assessment set size remains static
   )
 
 # Plot resampling timeline for each fold
-resamples_cv %>% 
+resamples_train %>% 
   plot_time_series_cv_plan(
         date, close, # date variable and value variable
         .facet_ncol = 2,
@@ -161,9 +161,9 @@ resamples_cv %>%
 ```{r}
 rf_model <- boost_tree(learn_rate = 0.01,
                         tree_depth = tune(),
-                        min_n = 1,
+                        min_n = tune(),
                         mtry = 500,
-                        trees = tune(),
+                        trees = 100,
                         stop_iter = 50) %>%
   set_engine('xgboost') %>%
   set_mode('classification')
@@ -185,7 +185,7 @@ rf_wflw
 ```{r}
 # Create grid. Create 5^2 = 25 models.
 rf_grid <- grid_regular(tree_depth(),
-                         trees(),
+                         min_n(),
                          levels = 5)
 rf_grid
 ```
@@ -196,7 +196,7 @@ rf_grid
 rf_model_trained <- rf_wflw %>% tune_grid(
   grid = rf_grid,
   metrics = metric_set(accuracy, roc_auc),
-  resamples = resamples_cv,
+  resamples = resamples_train,
   control = control_resamples(verbose = FALSE,
                               save_pred = TRUE,
                               allow_par = TRUE))
@@ -221,40 +221,115 @@ rf_wflw_best <- rf_wflw %>%
 rf_wflw_best
 ```
 
-# 10. Fit Model with Resampling (on Entire Set)
+# 10. Fit final model to training data
 ```{r}
-# Used as an alternative to measuring the model's performance
-# 9 Folds from previously defined resamples
+rf_final <- 
+  rf_wflw_best %>%
+  fit(data = train)
+
+# Training set predictions
+rf_final_training_pred <- 
+  predict(rf_final, train) %>% 
+  # Add in predicted class probabilities
+  bind_cols(predict(rf_final, train, type = "prob")) %>% 
+  # Add the true outcome data back in
+  bind_cols(train %>% select(future_return_sign))
+
+# Confusion Matrix for Random Forest
+confusionMatrix(factor(rf_final_training_pred$.pred_class),
+                factor(rf_final_training_pred$future_return_sign))
+
+```
+
+# 11. Extracting and visualizing variable importance
+```{r}
+# Extract model object from final workflow. 
+# Visualise variable importance using vip()
+rf_final %>% 
+  pull_workflow_fit() %>% 
+  vip()
+```
+
+# 13. Test Date
+## 13.1 Fitting final model to testing data
+```{r}
+# Testing set predictions
+# Using the model that was trained with all the training data and fitting onto the never seen before test data
+rf_final_testing_pred <- 
+  predict(rf_final, test) %>% 
+  # Add in predicted class probabilities
+  bind_cols(predict(rf_final, test, type = "prob")) %>% 
+  # Add the true outcome data back in
+  bind_cols(test %>% select(future_return_sign))
+
+# Get accuracy from predicting using testing set
+# Confusion Matrix for Random Forest
+confusionMatrix(factor(rf_final_testing_pred$.pred_class),
+                factor(rf_final_testing_pred$future_return_sign))
+```
+
+## 13.2 Plot bitcoin prices and buy/sell signal over time
+```{r}
+
+
+```
+
+
+
+# 14. Resampling (on Entire Set)
+## 14.1 Define resamples from train + test
+```{r}
+
+# Define resamples over entire set. Produces 12 splits.
+resamples_full <- bitcoin_model %>% 
+  time_series_cv(
+    date_var = date,
+    assess = '1 month',
+    skip = '1 month',
+    slice_limit = 12,  # Get last 12 months as test set
+    cumulative = TRUE
+  )
+
+# Plot resampling timeline for each fold
+resamples_full %>% 
+  plot_time_series_cv_plan(
+        date, close, # date variable and value variable
+        .facet_ncol = 2,
+        .line_alpha = 0.5,
+        .interactive = FALSE
+    )
+```
+
+## 14.2 Fit resamples  on the best model
+```{r}
+# Fit the resamples on the best model identified earlier from tuning
 rf_resampling <- rf_wflw_best %>%
   fit_resamples(
-    resamples = resamples_cv,
+    resamples = resamples_full,
     # Save predictions and model from each split
     control   = control_resamples(save_pred = TRUE, 
                                   extract = function(x) extract_model(x)))
-
 rf_resampling %>% 
   collect_metrics()
-
 ```
 
-# 11. Extracting and Visualizing variable importance
+
+## 14.2 Extracting and Visualizing variable importance
 See changes in variable importance overtime.
 ```{r}
-
+# Plot chart of price, fill by split
 
 # Plot variable importance of each split
 library(gridExtra)
+
 rf_resampling_vip_plot <- lapply(12:1, function(.x) 
   rf_resampling$.extracts[[.x]]$.extracts[[1]] %>% vip(num_features = 5) + ylab(rf_resampling$id[[.x]]))
+
 grid.arrange(grobs = rf_resampling_vip_plot, ncol = 6, nrow = 2)
+
 ```
 
-# 14. Evaluating Models
-## 14.1 Computing Returns from the Model.  
-Strategy 1: Buy and Hold  
-Strategy 2: Using time series model - Prophet
-Strategy 3: Using Random Forest, XGBoost
-
+# 14.3 Computing returns
 ```{r}
 # Function to compute returns. Returns a 1 column vector
 # predicted should be a 2 column df with columns date, pred_signal
@@ -269,7 +344,7 @@ computeReturns <- function(base, predicted){
 
 # Base Model
 # Combines all the assessment sets from the 12 splits from cross-validation resamples
-base_model <- resamples_cv %>% 
+base_model <- resamples_full %>% 
   mutate(.testing = map(splits, testing)) %>% 
   select(id, .testing) %>% 
   unnest(.testing) %>% 
@@ -289,99 +364,38 @@ rf_predict <- rf_resampling %>%
   select(date, pred_signal) %>% 
   mutate_at("pred_signal", ~as.numeric(as.character(.)))  # Convert factor into num
 
-# Time Series
-# prophet_predict <- read_csv("data/prophet_signals.csv") %>% 
-#   filter(date < "2020-11-30") %>%
-#   rename("pred_signal" = "prophet_pred_signal") %>% 
-#   select(-date)
-
 all_models <- base_model %>% 
-  # mutate(signal_prophet = prophet_predict$pred_signal,
-  #        return_prophet = computeReturns(base_model, prophet_predict),
-  #        signal_rf = rf_predict$pred_signal,
-  #        return_rf = computeReturns(base_model, rf_predict))
   mutate(signal_rf = rf_predict$pred_signal,
          return_rf = computeReturns(base_model, rf_predict))
 
 rmarkdown::paged_table(all_models %>% head())
 ```
 
-## 14.2 Visualisations
+## 14.4 Visualizing Buy/Sell Signal on Price Data
 ```{r}
 # Plot predicted buy/sell signal on price data
 # See differences between models
-prophet_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_prophet)) +
-    geom_line() +
-    theme_light()
 rf_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_rf)) +
     geom_line() +
     theme_light()
-grid.arrange(prophet_plot, rf_plot, nrow = 1)
+
+rf_plot
 ```
 
+## 14.5 Visualizing Returns
 ```{r}
 # Comparing returns across strategies
 all_models %>% 
   select(date, return_buyhold, return_rf) %>% 
-  # select(date, return_buyhold, return_prophet, return_rf) %>% 
   gather(key = "strategy", value = "returns", -date) %>% 
   ggplot(aes(x=date, y = returns)) +
     geom_line(aes(color = strategy)) +
     theme_light()
 ```
 
-
-## 14.3 Descriptive Statistics
-### 14.3.1 Confusion Matrix
+## 14.6 Confusion Matrix for Model over time
 ```{r}
-# Confusion Matrix for Prohphet
-print(confusionMatrix(factor(all_models$signal_prophet),
-                factor(all_models$future_return_sign)))
-
-# Confusion Matrix for Random Forest
 print(confusionMatrix(factor(all_models$signal_rf),
                 factor(all_models$future_return_sign)))
-```
-
-### 14.3.2 Overall Returns
-```{r}
-all_returns <- all_models %>% 
-  select(date, return_buyhold, return_rf) %>% 
-  # select(date, return_buyhold, return_prophet, return_rf) %>% 
-  gather(key = "strategy", value = "returns", -date) %>% 
-  group_by(strategy) %>% 
-  summarise_all(last)
-
-rmarkdown::paged_table(all_returns)
-```
-
-### 14.3.3 Mean Daily Returns and SD
-```{r}
-# Daily Returns
-all_models_performance <- all_models %>% 
-  select(date, future_return, signal_buyhold, signal_prophet, signal_rf) %>% 
-  gather(key = "strategy", value = "daily_returns", -c(date, future_return)) %>% 
-  mutate_at("daily_returns", ~.*future_return) %>% 
-  group_by(strategy) %>% 
-  summarise(d_ret = mean(daily_returns), d_sd = sd(daily_returns))
-
-rmarkdown::paged_table(all_models_performance)
-```
-
-### 14.3.4 Annualised Returns and SD
-```{r}
-all_models_performance <- all_models_performance %>% 
-  mutate(ann_ret = (1+d_ret)^365 - 1,
-         ann_sd = d_sd * 365 ^ 0.5)
-rmarkdown::paged_table(all_models_performance)
-```
-
-### 14.3.4 Sharpe Ratio
-```{r}
-all_models_performance <- all_models_performance %>% 
-  # Minus risk-free rate. T-bills
-  mutate(ann_sharpe = ann_ret-0.0011/ann_sd)
-
-rmarkdown::paged_table(all_models_performance)
 ```
 
