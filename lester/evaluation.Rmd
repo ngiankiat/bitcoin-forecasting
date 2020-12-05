@@ -60,7 +60,8 @@ prophet_predict <- read_csv("data/prophet_signals.csv") %>%
 xgboost_predict <- read_csv("data/xgboost_signals.csv")
 
 # Ensemble
-ensemble_predict <- read_csv("data/ensemble_predict.csv")
+ensemble_predict <- read_csv("data/ensemble_predict.csv") %>% 
+  mutate(date = dmy(date))
 
 ```
 
@@ -113,20 +114,26 @@ base_model <- test %>%
 #   return(overall$return_model)
 # }
 
-calculate_returns = function(data) {
-  df = data %>% 
-  mutate(Returns.Shift.Up = lead(Future.Ret),
-         Returns = Predicted_signal * Returns.Shift.Up,
+computeReturns = function(base, data) {
+  df = base %>% 
+    left_join(data, by="date") %>% 
+    mutate(Returns.Shift.Up = lead(future_return, default = 0),
+         Returns = pred_class * Returns.Shift.Up,
          Cum.Returns = cumprod(1 + Returns)) %>%
-  select(Cum.Returns)
+    select(Cum.Returns)
   
-  return(df)
+  return(df$Cum.Returns)
 }
 
 ```
 
 # 5. Compute returns of models
 ```{r}
+
+all_models <- base_model %>% 
+  mutate(signal_prophet = prophet_predict$pred_class,
+         return_prophet = computeReturns(base_model, prophet_predict))
+
 
 all_models <- base_model %>% 
   mutate(signal_prophet = prophet_predict$pred_signal,
