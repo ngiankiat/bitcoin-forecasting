@@ -61,12 +61,13 @@ prophet_predict <- read_csv("data/prophet_signals.csv") %>%
 xgb_predict <- read_csv("data/xgboost_signals.csv")
 
 # Ensemble
-ensemble_predict <- read_csv("data/ensemble_predict.csv") %>% 
+ensemble_predict <- read_csv("data/ensemble_predict_updated.csv") %>% 
   mutate(date = as.Date(date, format="%d/%m/%y"))
 
 ```
 
 # 3. Import Test Data
+Follow the definition of test data
 ```{r}
 # Read Data
 bitcoin_price <- read_csv("data/bitcoin_price.csv")
@@ -94,7 +95,8 @@ test <- bitcoin_model %>%
 
 ```
 
-# 3. Buy and Hold Strategy
+# 3. Buy and Hold Strategy  
+Buy at the beginning and sell only towards the end
 ```{r}
 # Base Model
 # Combines all the assessment sets from the 12 splits from cross-validation resamples
@@ -106,7 +108,7 @@ base_model <- test %>%
 
 # 4. Function to compute returns
 ```{r}
-# Function to compute returns. Returns a 1 column vector
+# Function to compute returns. Returns a 1 column returns vector
 computeReturns = function(base, data) {
   df = base %>%
     left_join(data, by="date") %>%
@@ -128,7 +130,7 @@ computeReturns = function(base, data) {
 
 ```
 
-# 5. Compute returns of models
+# 5. Compute returns of each model  
 ```{r}
 # Compute returns for all models and cbind them together
 all_models <- base_model %>% 
@@ -165,7 +167,8 @@ all_models %>% ggplot(aes(x = date, y = close, color = signal_ensemble)) +
     theme_light()
 ```
 
-# 7. Comparing returns across strategies
+# 7. Comparing returns across different models
+
 ```{r}
 all_models %>% 
   select(date, return_buyhold, return_prophet, return_xgb, return_ensemble) %>%
