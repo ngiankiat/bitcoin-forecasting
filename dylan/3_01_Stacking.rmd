@@ -195,6 +195,7 @@ xgb_wflw <- workflow() %>%
 
 # creating a grid to tune trees
 # number of models =5^3 = 125
+set.seed(123)
 xgb_params <- grid_regular(trees(),
                            tree_depth(),
                            levels = 5)
@@ -230,6 +231,7 @@ svm_spec <- svm_rbf(
 # Creating a parameter grid
 # grid_regular chooses sensible values for cost and rbg_sigma
 # number of total models = 5*5 = 25
+set.seed(123)
 svm_grid <- grid_regular(cost(),
                          rbf_sigma(),
                          levels=5)
@@ -267,6 +269,7 @@ rf_ranger_spec <- rand_forest(trees = tune(),
 # Creating a parameter grid
 # grid_regular chooses sensible values for trees and min)n
 # number of total models = 5^3 = 125
+set.seed(123)
 rf_ranger_grid <- grid_regular(trees(),
                                min_n(),
                                levels=5)
@@ -300,6 +303,7 @@ rf_randomForest_spec <- rand_forest(trees = tune(),
 # Creating a parameter grid
 # grid_regular chooses sensible values for trees and min)n
 # number of total models = 5^3 = 125
+set.seed(123)
 rf_randomForest_grid <- grid_regular(trees(),
                                      min_n(),
                                      levels=5)
@@ -357,6 +361,7 @@ nnet_wflow <- workflow() %>%
 
 # Grid for tuning
 # 5^2 = 25number of nn models
+set.seed(123)
 nnet_grid <- grid_regular(penalty(),
                           epochs(),
                           levels=5)
@@ -384,6 +389,7 @@ logistic_spec <- logistic_reg(penalty=tune(),
 # Creating a parameter grid
 # grid_regular chooses sensible values for trees and min)n
 # number of total models = 5^3 = 125
+set.seed(123)
 logistic_grid <- grid_regular(penalty(),
                               mixture(),
                               levels=5)
@@ -429,6 +435,7 @@ The end result is simply a tibble of different models and their predictions toge
 
 ```{r}
 # add_candidates() adds ensemble members to the stack
+set.seed(123)
 stacked_model <- stacks() %>%
   add_candidates(xgb_model_results) %>%
   add_candidates(svm_results) %>%
@@ -456,6 +463,7 @@ If stacking coefficients are non-zero, they will be included in the model.
 
 
 ```{r}
+set.seed(123)
 stacked_model_blended <- stacked_model %>%
   blend_predictions(penalty = seq(0, 1, 0.1))
 
