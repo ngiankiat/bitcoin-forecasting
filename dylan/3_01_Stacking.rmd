@@ -21,7 +21,7 @@ knitr::opts_chunk$set(
 )
 
 # Set knit directory to project directory
-knitr::opts_knit$set(root.dir = 'C:/Users/dylan/OneDrive/Documents/bitcoin-forecasting')
+# knitr::opts_knit$set(root.dir = 'C:/Users/dylan/OneDrive/Documents/bitcoin-forecasting')
 ```
 
 ```{r}
@@ -52,7 +52,7 @@ Here the data will be pulled from the a csv file which was exported from the pre
 
 ```{r}
 # Read Data
-bitcoin_price <- read_csv("data/bitcoin_price.csv")
+bitcoin_price <- read_csv("../data/bitcoin_price.csv")
 
 # Cleaning
 bitcoin_price[bitcoin_price == 0] <- NA
@@ -80,16 +80,16 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 ## 2.2 Getting Bitcoin Features
 ```{r}
 # Importing features from online sources (Marcus)
-bitcoin_features <- read_csv("data/bitcoin_features.csv") %>%
+bitcoin_features <- read_csv("../data/bitcoin_features.csv") %>%
   mutate(date=as.Date(date, format =))
 
 # Add sentiment features from reddit (Darren)
 bitcoin_features <- bitcoin_features %>% 
-  left_join(read_csv("data/bitcoin_reddit.csv"), by="date")
+  left_join(read_csv("../data/bitcoin_reddit.csv"), by="date")
 
 # Add sentiment features from news sites (QL)
 bitcoin_features <- bitcoin_features %>% 
-  left_join(read_csv("data/bitcoin_news.csv") %>%
+  left_join(read_csv("../data/bitcoin_news.csv") %>%
               mutate(date = as.Date(date, format = "%d/%m/%y")), by="date")
 
 rmarkdown::paged_table(bitcoin_features %>% head())
@@ -112,7 +112,7 @@ set.seed(123)
 
 # Creating the training set
 train <- bitcoin_model %>%
-  filter(between(date, as.Date("2018-01-01"), as.Date("2020-11-29")))
+  filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
 
 # 2020 data is kept completely out, purely for testing
 test <- bitcoin_model %>%
@@ -204,7 +204,7 @@ xgb_params <- grid_regular(trees(),
 
 xgb_model_results <- xgb_wflw %>% tune_grid(
   grid = xgb_params,
-  metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
+  # metrics = metric_set(accuracy, roc_auc, mn_log_loss),  # Mean log loss
   resamples = resamples_cv,
   control = ctrl_grid)
 
@@ -366,7 +366,7 @@ nnet_results <- nnet_wflow %>%
   tune_grid(
     resamples = resamples_cv, 
     grid = nnet_grid,
-    metrics = metric_set(accuracy, roc_auc, mn_log_loss),
+    # metrics = metric_set(accuracy, roc_auc, mn_log_loss),
     control = ctrl_grid
   )
 
@@ -398,7 +398,7 @@ logistic_results <- logistic_wflow %>%
   tune_grid(
     resamples = resamples_cv, 
     grid = logistic_grid,
-    metrics = metric_set(accuracy, roc_auc),
+    # metrics = metric_set(accuracy, roc_auc),
     control = ctrl_grid
   )
 
@@ -493,10 +493,10 @@ confusionMatrix(factor(test_predict$.pred_class),
 The ensemble has performed relatively well, giving an accuracy of 73.68%. However, 1 key issue might be a realtively high number of false postive results and it is possible that days with huge falls in bitcoin pricing could affect the returns.
 
 
-```{r}
+```{r eval = FALSE}
 #Writing csv for use for model evaluation
 test_predict %>%
   select(date, pred_class=.pred_class) %>%
-  write.csv("data/ensemble_predict.csv")
+  write.csv("../data/ensemble_predict_updated.csv")
 ```
 

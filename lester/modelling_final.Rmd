@@ -352,7 +352,7 @@ library(gridExtra)
 rf_resampling_vip_plot <- lapply(12:1, function(.x) 
   rf_resampling$.extracts[[.x]]$.extracts[[1]] %>% vip(num_features = 5) + ylab(rf_resampling$id[[.x]]))
 
-grid.arrange(grobs = rf_resampling_vip_plot, ncol = 6, nrow = 2)
+grid.arrange(grobs = rf_resampling_vip_plot, ncol = 3, nrow = 4)
 
 ```
 
