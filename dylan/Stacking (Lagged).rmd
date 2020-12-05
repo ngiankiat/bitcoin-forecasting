@@ -7,6 +7,8 @@ output: html_document
 
 [Stacking](https://machinelearningmastery.com/stacking-ensemble-machine-learning-with-python/#:~:text=Stacked%20Generalization%20or%20%E2%80%9CStacking%E2%80%9D%20for,dataset%2C%20like%20bagging%20and%20boosting.) is an esemble machine learing algorithm that involves combining predictions from multiple machine learning models on the same dataset.
 
+Assumption: Using today's data to predict whether we should buy at tomorrow's open and sell at tomorrow's close.
+
 # 1. Load Packages
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(
@@ -78,10 +80,9 @@ bitcoin_model <- bitcoin_price %>%
   mutate(tmrCloseMinusOpen = lead(close)-lead(open),
          future_return = tmrCloseMinusOpen/lead(open),
          future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>%
-  select(date, close, volume_btc, volume_currency, future_return, future_return_sign)
+  select(date, close, open, volume_btc, volume_currency, future_return, future_return_sign) %>%
+  .[-nrow(.),] #remove last row because returns are based on next day's opening and close
 
-
-bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
 
 rmarkdown::paged_table(bitcoin_model %>% head())
 ```
@@ -123,18 +124,15 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 set.seed(123)
 
 # Creating the training set
-# leading the future_return_sign so that we do not run on today's price
 train <- bitcoin_model %>%
   filter(between(date, as.Date("2018-01-01"), as.Date("2020-11-29"))) %>%
-  mutate(future_return_sign = lead(future_return_sign),
-         bad = ifelse(is.na(bad), 0, bad),
+  mutate(bad = ifelse(is.na(bad), 0, bad),
          good = ifelse(is.na(good), 0, good),
-         overall = good - bad) %>%
-  .[-nrow(.), ] # remove last row, because y variable was brought forward by 1 day
+         overall = good - bad)
 
 
 # Checking for NAs
-sapply(train, function(x) sum(is.na(x)))
+#sapply(train, function(x) sum(is.na(x)))
 
 rmarkdown::paged_table(train %>% head())
 ```
@@ -144,7 +142,7 @@ rmarkdown::paged_table(train %>% head())
 # excluding columns not used for prediction
 # a general recipe for preprocessing train data
 recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
-  update_role(date, future_return, close, new_role = "ID")
+  update_role(date, future_return, close, open, new_role = "ID")
 ```
 
 # 5. Creating folds
@@ -423,9 +421,12 @@ logistic_results %>% collect_metrics
 
 ## 6.6 Other Classification models
 Other classification models available in parsnips include:
-decision_tree
-bag_tree
-nearest_neighbour
+
+* decision_tree
+
+* bag_tree
+
+* nearest_neighbour
 
 
 
@@ -503,4 +504,68 @@ confusionMatrix(factor(train_predict$.pred_class),
                 factor(train_predict$future_return_sign))
 ```
 
-The ensemble has performed relatively well, giving an accuracy of 82.6%. However, 1 key issue might be a realtively high number of false postive results and it is possible that days with huge falls in bitcoin pricing could affect the returns/
+The ensemble has performed relatively well, giving an accuracy of 79.89%. However, 1 key issue might be a realtively high number of false postive results and it is possible that days with huge falls in bitcoin pricing could affect the returns.
+
+
+# Evaluating Model
+
+## 7.1 Visualisng the accuracy of the model
+```{r}
+# getting the predictions for all data points with probability and also with signal
+# signal indicates buy=1, sell=0
+# position closes at the end of every day
+# didnt include transaction cost
+train_predict <- train %>%
+  bind_cols(predict(stacked_model_blended_model, ., type='prob')) %>%
+  left_join(train %>%
+              bind_cols(predict(stacked_model_blended_model, .,)) %>%
+  select(date, .pred_class) %>%
+  rename(signal=.pred_class)) %>%
+  mutate(return_buyhold = cumprod(1+ (lead(close) - close)/close),
+         # if signal=0, the return = 1 + 0
+         # if signal=1, means return = 1 + future_return
+         return_model_only_buy = cumprod(1+ ifelse(signal == 1,
+                                                   future_return,
+                                                   0)),
+         # if signal = 1, means we buy
+         # if signal = 0, means we sell so the return will be negative
+         return_model_buy_and_sell = cumprod( 1 + ifelse(signal==1,
+                                                         future_return,
+                                                         -future_return))
+         )
+
+
+# just to visualise part of the train_predict tibble
+train_predict %>%
+  select(date, close, future_return, signal,
+         return_buyhold, return_model_only_buy,
+         return_model_buy_and_sell) #%>%
+  #head(10)
+```
+
+```{r}
+ggplot(train_predict, aes(x=date, y=close, colour=.pred_1)) +
+  scale_colour_gradient(low="red", high="green") +
+  geom_line()
+```
+Plot shows the signal overlayed on top of the bitcoin closing price. Green idicates days where the model predicts a high probability of positive price move. It can be seen that the model is able to run relatively well, with most updates being ligthed with green.
+
+## 7.2 Buy and hold, buy or buy and sell
+
+Buy and hold is equivalent to buying bitcoin form the start and selling it on the last day.
+
+Buy is following the model's prediction to buy at opening price when the model predicts 1, and sell at the end of the same day.
+
+Buy and sell is following the model's prediction to buy at opening price when the model predicts 1, and sell at the end of the same day. Additionally. if the model predicts 0, we short sell bitcoin at the start of the day and close our position at the end of the day.
+
+Below, we visualise the returns of each of these methods:
+```{r}
+ggplot(train_predict, aes(x = date)) + 
+  geom_line(aes(y = return_buyhold), colour = "black") + 
+  geom_line(aes(y = return_model_only_buy), colour = "blue") +
+  geom_line(aes(y= return_model_buy_and_sell), colour="green") +
+  scale_y_log10() +
+  ylab("Returns")
+```
+
+From here, we can tell that the ensemble model's returns for both buy and sell easily beats that of the buy and hold strategy. It also significantly outperforms the buy only strategy, signifying that the model's ability
