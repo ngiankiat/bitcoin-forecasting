@@ -57,7 +57,7 @@ prophet_predict <- read_csv("data/prophet_signals.csv") %>%
   mutate(date = dmy(date))
 
 # XGBoost
-xgboost_predict <- read_csv("data/xgboost_signals.csv")
+xgb_predict <- read_csv("data/xgboost_signals.csv")
 
 # Ensemble
 ensemble_predict <- read_csv("data/ensemble_predict.csv") %>% 
@@ -136,25 +136,30 @@ all_models <- base_model %>%
 
 
 all_models <- base_model %>% 
-  mutate(signal_prophet = prophet_predict$pred_signal,
+  mutate(signal_prophet = prophet_predict$pred_class,
          return_prophet = computeReturns(base_model, prophet_predict),
-         signal_rf = rf_predict$pred_signal,
-         return_rf = computeReturns(base_model, rf_predict))
+         signal_xgb = xgb_predict$pred_class,
+         return_xgb = computeReturns(base_model, xgb_predict),
+         signal_ensemble = ensemble_predict$pred_class,
+         return_ensemble = computeReturns(base_model, ensemble_predict))
 
 rmarkdown::paged_table(all_models %>% head())
 ```
 
-## 14.2 Visualisations
+## 14.2 Visualisations for 
 ```{r}
 # Plot predicted buy/sell signal on price data
 # See differences between models
 prophet_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_prophet)) +
     geom_line() +
     theme_light()
-rf_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_rf)) +
+xbg_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_xgb)) +
     geom_line() +
     theme_light()
-grid.arrange(prophet_plot, rf_plot, nrow = 1)
+ensemble_plot <- all_models %>% ggplot(aes(x = date, y = close, color = signal_ensemble)) +
+    geom_line() +
+    theme_light()
+grid.arrange(prophet_plot, xbg_plot, ensemble_plot, ncol = 1)
 ```
 
 ```{r}
