@@ -21,7 +21,7 @@ knitr::opts_chunk$set(
 )
 
 # Set knit directory to project directory
-# knitr::opts_knit$set(root.dir = 'C:/Users/dylan/OneDrive/Documents/bitcoin-forecasting')
+knitr::opts_knit$set(root.dir = 'C:/Users/dylan/OneDrive/Documents/bitcoin-forecasting')
 ```
 
 ```{r}
@@ -52,7 +52,7 @@ Here the data will be pulled from the a csv file which was exported from the pre
 
 ```{r}
 # Read Data
-bitcoin_price <- read_csv("../data/bitcoin_price.csv")
+bitcoin_price <- read_csv("data/bitcoin_price.csv")
 
 # Cleaning
 bitcoin_price[bitcoin_price == 0] <- NA
@@ -80,16 +80,16 @@ rmarkdown::paged_table(bitcoin_model %>% head())
 ## 2.2 Getting Bitcoin Features
 ```{r}
 # Importing features from online sources (Marcus)
-bitcoin_features <- read_csv("../data/bitcoin_features.csv") %>%
+bitcoin_features <- read_csv("data/bitcoin_features.csv") %>%
   mutate(date=as.Date(date, format =))
 
 # Add sentiment features from reddit (Darren)
 bitcoin_features <- bitcoin_features %>% 
-  left_join(read_csv("../data/bitcoin_reddit.csv"), by="date")
+  left_join(read_csv("data/bitcoin_reddit.csv"), by="date")
 
 # Add sentiment features from news sites (QL)
 bitcoin_features <- bitcoin_features %>% 
-  left_join(read_csv("../data/bitcoin_news.csv") %>%
+  left_join(read_csv("data/bitcoin_news.csv") %>%
               mutate(date = as.Date(date, format = "%d/%m/%y")), by="date")
 
 rmarkdown::paged_table(bitcoin_features %>% head())
@@ -498,7 +498,7 @@ confusionMatrix(factor(test_predict$.pred_class),
                 factor(test_predict$future_return_sign))
 ```
 
-The ensemble has performed relatively well, giving an accuracy of 73.68%. However, 1 key issue might be a realtively high number of false postive results and it is possible that days with huge falls in bitcoin pricing could affect the returns.
+The ensemble has performed relatively well, giving an accuracy of 44.08%. However, 1 key issue might be a realtively high number of false postive results and it is possible that days with huge falls in bitcoin pricing could affect the returns.
 
 
 ```{r eval = FALSE}
