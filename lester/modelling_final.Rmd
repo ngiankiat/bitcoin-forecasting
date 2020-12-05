@@ -48,7 +48,6 @@ sDate = "2018-01-01"
 eDate = "2020-11-30"
 ```
 
-
 # 2. Extracting Data/Adding features
 ## 2.1 Getting Bitcoin Prices
 ```{r}
@@ -251,35 +250,27 @@ rf_final %>%
 ```
 
 # 13. Test Date
-## 13.1 Fitting final model to testing data
+Fitting final model to testing data
+Plot confusion matrix and save results
 ```{r}
 # Testing set predictions
 # Using the model that was trained with all the training data and fitting onto the never seen before test data
-rf_final_testing_pred <- 
-  predict(rf_final, test) %>% 
-  # Add in predicted class probabilities
-  bind_cols(predict(rf_final, test, type = "prob")) %>% 
-  # Add the true outcome data back in
-  bind_cols(test %>% select(future_return_sign))
+rf_final_testing_pred <- test %>%
+  select(date, future_return_sign) %>% 
+  bind_cols(predict(rf_final, test)) %>% 
+  rename(pred_class = .pred_class)
 
 # Get accuracy from predicting using testing set
 # Confusion Matrix for Random Forest
-confusionMatrix(factor(rf_final_testing_pred$.pred_class),
+confusionMatrix(factor(rf_final_testing_pred$pred_class),
                 factor(rf_final_testing_pred$future_return_sign))
+
+write_csv(rf_final_testing_pred %>% select(-future_return_sign), "data/xgboost_signals.csv")
 ```
-
-## 13.2 Plot bitcoin prices and buy/sell signal over time
-```{r}
-
-
-```
-
-
 
 # 14. Resampling (on Entire Set)
 ## 14.1 Define resamples from train + test
 ```{r}
-
 # Define resamples over entire set. Produces 12 splits.
 resamples_full <- bitcoin_model %>% 
   time_series_cv(
@@ -313,12 +304,10 @@ rf_resampling %>%
   collect_metrics()
 ```
 
-
-## 14.2 Extracting and Visualizing variable importance
+## 14.3 Extracting and Visualizing variable importance
 See changes in variable importance overtime.
+![](lester/img/resampling_final.png)
 ```{r}
-# Plot chart of price, fill by split
-
 # Plot variable importance of each split
 library(gridExtra)
 
