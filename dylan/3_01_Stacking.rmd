@@ -505,6 +505,6 @@ The ensemble has performed relatively well, giving an accuracy of 73.68%. Howeve
 #Writing csv for use for model evaluation
 test_predict %>%
   select(date, pred_class=.pred_class) %>%
-  write.csv("../data/ensemble_predict_updated.csv")
+  write.csv("data/ensemble_predict_updated_3am.csv")
 ```
 
