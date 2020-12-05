@@ -1,4 +1,4 @@
-,date,percentage_change,constraining,litigious,negative,positive,superfluous,uncertainty,overall,p1_percentage_change,p2_percentage_change,p3_percentage_change,p4_percentage_change
+,date,percentage_change,news constraining,news litigious,news negative,news positive,news superfluous,news uncertainty,news sentiment,p1_percentage_change,p2_percentage_change,p3_percentage_change,p4_percentage_change
 1,01-01-18,0.002310777,0,0,0,0,0,0,0,0.048684699,0.060329549,-0.010382007,0.073558442
 2,02-01-18,0.048684699,0,0,0,1,0,0,1,0.060329549,-0.010382007,0.073558442,0.041296838
 3,03-01-18,0.060329549,0,0,0,0,0,0,0,-0.010382007,0.073558442,0.041296838,-0.016678024
