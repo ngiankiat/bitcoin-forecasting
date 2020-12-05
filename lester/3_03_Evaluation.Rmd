@@ -42,13 +42,15 @@ library(stacks) # Ensemble
 ```
 
 # 1. Evaluating Models
+In our previous files, we have built 3 different models for predicting when we should buy/sell bitcoin. We will introduce the buy-and-hold strategy to act as a benchmark performance for us. Here are the 4 models we will be evaluating:
+
 Strategy 1: Buy and Hold  
-Strategy 2: Using time series model - Prophet
+Strategy 2: Using time series model - Prophet  
 Strategy 3: Using XGBoost Trees  
 Strategy 4: Using multiple models (ensemble)  
 
 # 2. Import predictions   
-Import predictions on test data from different models
+Import predictions (on test data) from different models that we previously predicted 
 ```{r}
 # Time Series
 # change to date format
