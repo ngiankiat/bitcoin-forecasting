@@ -508,3 +508,7 @@ test_predict %>%
   write.csv("data/ensemble_predict_updated_3am.csv")
 ```
 
+```{r stop parallel}
+stopCluster(cl)
+```
+
