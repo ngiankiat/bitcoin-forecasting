@@ -61,7 +61,7 @@ xgb_predict <- read_csv("../data/xgboost_signals_open.csv") %>%
   filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-28")))
 
 # Ensemble
-ensemble_predict <- read_csv("../data/ensemble_predict_updated_11am.csv") %>% 
+ensemble_predict <- read_csv("../data/ensemble_predict_open.csv") %>% 
   mutate(date = as.Date(date, format="%d/%m/%y")) %>% 
   filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-28")))
 
