@@ -53,14 +53,14 @@ Import predictions (on test data) from different models that we previously predi
 ```{r}
 # Time Series
 # change to date format
-prophet_predict <- read_csv("data/prophet_signals.csv") %>% 
+prophet_predict <- read_csv("../data/prophet_signals.csv") %>% 
   mutate(date = as.Date(date, format="%d/%m/%y"))
 
 # XGBoost
-xgb_predict <- read_csv("data/xgboost_signals.csv")
+xgb_predict <- read_csv("../data/xgboost_signals.csv")
 
 # Ensemble
-ensemble_predict <- read_csv("data/ensemble_predict_updated.csv") %>% 
+ensemble_predict <- read_csv("../data/ensemble_predict_updated_3am.csv") %>% 
   mutate(date = as.Date(date, format="%d/%m/%y"))
 
 ```
