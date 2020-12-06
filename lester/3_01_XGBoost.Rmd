@@ -404,11 +404,10 @@ base_model <- resamples_full %>%
 computeReturns <- function(base, predicted){
   overall <- base %>%
     left_join(predicted, by="date") %>%
-    mutate(return_model = pred_class * future_return)
+    mutate(return_model = cumprod(1 + pred_class * future_return))
   
   return(overall$return_model)
 }
-
 
 # RF model
 # Extract and merge predictions of individual fold test data
@@ -416,13 +415,13 @@ rf_predict <- rf_resampling %>%
   mutate(.assessment = map(splits, assessment)) %>%
   select(id, .predictions, .assessment) %>% 
   unnest(c(.predictions, .assessment), names_repair = "universal") %>% 
-  rename(pred_signal = .pred_class) %>% 
+  rename(pred_class = .pred_class) %>% 
   arrange(date) %>% 
-  select(date, pred_signal) %>% 
-  mutate_at("pred_signal", ~as.numeric(as.character(.)))  # Convert factor into num
+  select(date, pred_class) %>% 
+  mutate_at("pred_class", ~as.numeric(as.character(.)))  # Convert factor into num
 
 all_models <- base_model %>% 
-  mutate(signal_rf = rf_predict$pred_signal,
+  mutate(signal_rf = rf_predict$pred_class,
          return_rf = computeReturns(base_model, rf_predict))
 
 rmarkdown::paged_table(all_models %>% head())
