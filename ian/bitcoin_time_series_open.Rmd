@@ -375,12 +375,13 @@ prophet_forecasts_sign
 
 Export the prophet prediction signals to be compared with the predictions of other models.
 
-```{r export, eval = FALSE}
+```{r export}
 # Export date and prophet forecast signals
 prophet_forecasts_sign %>%
   select(date, pred_signal) %>%
   rename(prophet_pred_signal = pred_signal) %>%
-  write.csv(file="../data/prophet_signals.csv", row.names = FALSE)
+  filter(date < "2020-11-29") %>%
+  write.csv(file="../data/prophet_signals_open.csv", row.names = FALSE)
 ```
 
 
