@@ -163,7 +163,7 @@ recipe_spec <- recipe(future_return_sign ~ ., data = train) %>%
 
 # 5. Create resamples from cross validation folds of 3 months for tuning
 
-Next, we create resamples of the training data for cross-validation. We set a 3-month window for resmaples, such that the model can be tuned every 3 months. This simulates our model being updated every 3 months in response to changing conditions.
+Next, we create resamples of the training data for cross-validation. 
 
 ```{r}
 # Cross Validation Folds for Tuning. Produces 9 slices
@@ -289,8 +289,6 @@ confusionMatrix(factor(rf_final_training_pred$.pred_class),
 
 # 11. Extracting and visualizing variable importance
 
-We visualise the importance of 
-
 ```{r}
 # Extract model object from final workflow. 
 # Visualise variable importance using vip()
@@ -302,8 +300,6 @@ rf_final %>%
 # 13. Test Data
 
 The real test of our model's performance would be the accuracy of its predictions on test data. We fit the final model to the test data from July to November 2020 and plotted the confusion matrix.
-
-Although we observe an expected decrease in prediction accuracy from training to testing data, the 43% accuracy is still quite reasonable.
 
 ```{r}
 # Testing set predictions
@@ -324,9 +320,9 @@ confusionMatrix(factor(rf_final_testing_pred$pred_class),
 
 # 14. Resampling (on Entire Set)
 
-We perform another round of resampling, this time using 1-month intervals. 
+We perform another round of resampling, this time using 1-month intervals. This simulates the re-training of our model every month by fitting it with the latest 1 month's data and predicting against the next month.
 
-## 14.1 Define resamples from train + test
+## 14.1 Define resamples from both train + test
 ```{r}
 # Define resamples over entire set. Produces 12 splits.
 resamples_full <- bitcoin_model %>% 
@@ -348,7 +344,7 @@ resamples_full %>%
     )
 ```
 
-## 14.2 Fit resamples  on the best model
+## 14.2 Fit resamples on the best model
 ```{r}
 # Fit the resamples on the best model identified earlier from tuning
 rf_resampling <- rf_wflw_best %>%
@@ -375,7 +371,7 @@ grid.arrange(grobs = rf_resampling_vip_plot, ncol = 3, nrow = 4)
 
 ```
 
-# 14.3 Computing returns
+# 14.4 Computing returns
 ```{r}
 # Base Model
 # Combines all the assessment sets from the 12 splits from cross-validation resamples
@@ -391,22 +387,22 @@ base_model <- resamples_full %>%
 # Function to compute returns. Returns a 1 column vector
 # predicted should be a 2 column df with columns date, pred_class
 # Assume 0.3% as trading cost
-computeReturns <- function(base, predicted){
-  overall <- base %>%
-    left_join(predicted, by="date") %>%
-    mutate(trading_cost = abs(pred_class - lag(pred_class, n = 1, default = 0)) * 0.003,
-           return_model = cumprod(1 + future_return * pred_class - trading_cost))
-  return(overall$return_model)
-}
-
-# Computing returns open to open
 # computeReturns <- function(base, predicted){
 #   overall <- base %>%
 #     left_join(predicted, by="date") %>%
-#     mutate(return_model = cumprod(1 + pred_class * future_return))
-#   
+#     mutate(trading_cost = abs(pred_class - lag(pred_class, n = 1, default = 0)) * 0.003,
+#            return_model = cumprod(1 + future_return * pred_class - trading_cost))
 #   return(overall$return_model)
 # }
+
+# Computing returns open to open
+computeReturns <- function(base, predicted){
+  overall <- base %>%
+    left_join(predicted, by="date") %>%
+    mutate(return_model = cumprod(1 + pred_class * future_return))
+
+  return(overall$return_model)
+}
 
 # RF model
 # Extract and merge predictions of individual fold test data
