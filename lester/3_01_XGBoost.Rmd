@@ -73,37 +73,36 @@ bitcoin_price <- bitcoin_price %>%
   map_df(na.locf)
 
 # Defining Target (Close to Close)
-bitcoin_model <- bitcoin_price %>%
-  select(date, open, close) %>%
-  tq_mutate(select = close,
-            mutate_fun = periodReturn,
-            period = 'daily',
-            type = 'arithmetic',
-            col_rename = 'future_return') %>%
-  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>%
-  # Shift up future_returns and sign by 1. Use today's data to predict tomorrow's returns.
-  # future_returns indicates the returns if I buy at today's close and sell at tmrrw's close
-  # each row represent today
-  mutate_at(c("future_return", "future_return_sign"), lead)
-bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
-
-# Defining Target (Open to Open)
 # bitcoin_model <- bitcoin_price %>%
 #   select(date, open, close) %>%
 #   tq_mutate(select = close,
 #             mutate_fun = periodReturn,
 #             period = 'daily',
 #             type = 'arithmetic',
-#             col_rename = "change") %>%
-#   rename(close_1d_change = change) %>% 
-#   tq_mutate(select = open,
-#             mutate_fun = periodReturn,
-#             period = 'daily',
-#             type = 'arithmetic',
 #             col_rename = 'future_return') %>%
-#   mutate(future_return = lead(future_return, n=2, default = 0),
-#          future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)))
-         
+#   mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>%
+#   # Shift up future_returns and sign by 1. Use today's data to predict tomorrow's returns.
+#   # future_returns indicates the returns if I buy at today's close and sell at tmrrw's close
+#   # each row represent today
+#   mutate_at(c("future_return", "future_return_sign"), lead)
+# bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
+
+# Defining Target (Open to Open)
+bitcoin_model <- bitcoin_price %>%
+  select(date, open, close) %>%
+  tq_mutate(select = close,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
+            col_rename = "change") %>%
+  rename(close_1d_change = change) %>%
+  tq_mutate(select = open,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
+            col_rename = 'future_return') %>%
+  mutate(future_return = lead(future_return, n=2, default = 0),
+         future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)))
 bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
 
 rmarkdown::paged_table(bitcoin_model %>% head())
@@ -148,7 +147,7 @@ Similar to the time series model, we will be using Bitcoin price data from Janua
 ```{r}
 # YMD format
 train <- bitcoin_model %>% filter(between(date, as.Date("2018-01-01"), as.Date("2020-06-30")))
-test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-29")))
+test <- bitcoin_model %>% filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-28")))
 ```
 
 # 4. Create Recipe
@@ -320,7 +319,7 @@ confusionMatrix(factor(rf_final_testing_pred$pred_class),
                 factor(rf_final_testing_pred$future_return_sign))
 
 # Save predictions to data folder
-# write_csv(rf_final_testing_pred %>% select(-future_return_sign), "../data/xgboost_signals.csv")
+# write_csv(rf_final_testing_pred %>% select(-future_return_sign), "../data/xgboost_signals_open.csv")
 ```
 
 # 14. Resampling (on Entire Set)

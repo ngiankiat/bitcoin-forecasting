@@ -52,16 +52,16 @@ Import predictions (on test data) from different models that we previously predi
 ```{r}
 # Time Series
 # change to date format
-prophet_predict <- read_csv("../data/prophet_signals.csv") %>% 
+prophet_predict <- read_csv("../data/prophet_signals_open.csv") %>% 
   mutate(date = as.Date(date, format="%d/%m/%y")) %>% 
   filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-28")))
 
 # XGBoost
-xgb_predict <- read_csv("../data/xgboost_signals.csv") %>% 
+xgb_predict <- read_csv("../data/xgboost_signals_open.csv") %>% 
   filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-28")))
 
 # Ensemble
-ensemble_predict <- read_csv("../data/ensemble_predict_updated_11am.csv") %>% 
+ensemble_predict <- read_csv("../data/ensemble_predict_open.csv") %>% 
   mutate(date = as.Date(date, format="%d/%m/%y")) %>% 
   filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-28")))
 
@@ -78,19 +78,38 @@ bitcoin_price <- bitcoin_price %>%
   map_df(na.locf)
 
 # Defining Target
+# bitcoin_model <- bitcoin_price %>%
+#   select(date, open, close) %>% 
+#   tq_mutate(select = close,
+#             mutate_fun = periodReturn,
+#             period = 'daily',
+#             type = 'arithmetic',
+#             col_rename = 'future_return') %>%
+#   mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>% 
+#   # Shift up future_returns and sign by 1. Use today's data to predict tomorrow's returns.
+#   # future_returns indicates the returns if I buy at today's close and sell at tmrrw's close
+#   # each row represent today
+#   mutate_at(c("future_return", "future_return_sign"), lead)
+# bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
+
+# Open to Open
 bitcoin_model <- bitcoin_price %>%
-  select(date, open, close) %>% 
+  select(date, open, close) %>%
   tq_mutate(select = close,
             mutate_fun = periodReturn,
             period = 'daily',
             type = 'arithmetic',
+            col_rename = "change") %>%
+  rename(close_1d_change = change) %>%
+  tq_mutate(select = open,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
             col_rename = 'future_return') %>%
-  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>% 
-  # Shift up future_returns and sign by 1. Use today's data to predict tomorrow's returns.
-  # future_returns indicates the returns if I buy at today's close and sell at tmrrw's close
-  # each row represent today
-  mutate_at(c("future_return", "future_return_sign"), lead)
+  mutate(future_return = lead(future_return, n=2, default = 0),
+         future_return_sign = as.factor(ifelse(future_return > 0, 1, 0)))
 bitcoin_model <- bitcoin_model[-nrow(bitcoin_model), ]
+
 test <- bitcoin_model %>% 
   # filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-29")))
   filter(between(date, as.Date("2020-07-01"), as.Date("2020-11-28")))
@@ -111,6 +130,7 @@ base_model <- test %>%
 # 4. Function to compute returns
 ```{r}
 # Function to compute returns. Returns a 1 column returns vector
+# Open to Open
 computeReturns = function(base, data) {
   df = base %>%
     left_join(data, by="date") %>%
