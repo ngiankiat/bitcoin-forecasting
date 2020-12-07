@@ -195,9 +195,9 @@ We chose a XGBoost model because of it reduces variance and bias. Each model is 
 ```{r}
 rf_model <- boost_tree(learn_rate = 0.01,
                         tree_depth = tune(),
-                        min_n = tune(),
+                        min_n = 1,
                         mtry = 500,
-                        trees = 100,
+                        trees = tune(),
                         stop_iter = 50) %>%
   set_engine('xgboost') %>%
   set_mode('classification')
@@ -225,7 +225,7 @@ We perform hyperparamter tuning for the "tree_depth" and "min_n" parameters to e
 ```{r}
 # Create grid. Create 5^2 = 25 models.
 rf_grid <- grid_regular(tree_depth(),
-                         min_n(),
+                         trees(),
                          levels = 5)
 rf_grid
 ```
@@ -243,14 +243,23 @@ rf_model_trained <- rf_wflw %>% tune_grid(
 
 rf_model_results <- rf_model_trained %>% 
   collect_metrics()
+rmarkdown::paged_table(rf_model_results)
 
+```
+
+```{r}
 # Show the top 5 candidate models
 rf_model_trained %>% 
   show_best("accuracy")
+```
 
+```{r}
 # Save the best model parameters based on mn_log_loss metric
 best_params <- rf_model_trained %>%
   select_best('accuracy')
+
+# Print best hyperparameters chosen for model
+best_params
 ```
 
 # 9. Finalize workflow with the best model parameters
@@ -315,7 +324,7 @@ confusionMatrix(factor(rf_final_testing_pred$pred_class),
                 factor(rf_final_testing_pred$future_return_sign))
 
 # Save predictions to data folder
-# write_csv(rf_final_testing_pred %>% select(-future_return_sign), "../data/xgboost_signals_open.csv")
+write_csv(rf_final_testing_pred %>% select(-future_return_sign), "../data/xgboost_signals_open.csv")
 ```
 
 # 14. Resampling (on Entire Set)
