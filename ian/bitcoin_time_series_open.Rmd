@@ -77,15 +77,16 @@ colnames(bitcoin_price) <- c("date", "open", "high", "low", "close", "volume_btc
 rm(quandl_tidy)
 ```
 
-After importing the Bitcoin price data, we narrow our focus to the Bitcoin daily closing prices. Note that there are some days where the closing price is $0. In those cases, we will use the previous day's closing price to fill these values
+After importing the Bitcoin price data, we narrow our focus to the Bitcoin daily open prices. We do so because the next day's opening price is the price that earliest trade can be processed at.
 
-```{r narrow scope to Bitcoin closing price}
+Note that there are some days where the opening price is $0. In those cases, we will use the previous day's opening price to fill these values.
+
+```{r narrow scope to Bitcoin opening price}
 bitcoin_price_tbl <- 
   bitcoin_price %>% 
   select(date, open) %>%
-  mutate(open = ifelse(open == 0, NA, open)) %>% # replace 0s with NAs
-  fill(open, .direction = c("down")) %>%           # fill NAs with previous day's closing price
-  rename(price = open) %>%
+  mutate(open = ifelse(open == 0, NA, open)) %>%   # replace 0s with NAs
+  fill(open, .direction = c("down")) %>%           # fill NAs with previous day's opening price
   as_tibble()
 
 head(bitcoin_price_tbl)
@@ -120,12 +121,12 @@ Sources:
 
 ## 3.1 Visualisation
 
-We begin by visualising the daily closing prices for Bitcoin over the time period of the data. 
+We begin by visualising the daily opening prices for Bitcoin over the time period of the data. 
 
-```{r visualise Bitcoin daily closing prices}
-# Plot daily Bitcoin closing prices
+```{r visualise Bitcoin daily opening prices}
+# Plot daily Bitcoin opening prices
 bitcoin_price_train_tbl %>%
-    ggplot(aes(date, price)) +
+    ggplot(aes(date, open)) +
     geom_line(col = palette_light()[6]) +
     geom_ma(ma_fun = SMA, n = 30, size = 1, col = palette_light()[2]) +
     theme_tq() +
@@ -136,7 +137,7 @@ bitcoin_price_train_tbl %>%
 
 ## 3.2 ARIMA Forecasting
 
-Convert Bitcoin daily closing price data from `tbl` to a `ts` object.
+Convert Bitcoin daily opening price data from `tbl` to a `ts` object.
 
 ```{r convert from tbl to ts}
 # Convert from tbl to ts
@@ -203,7 +204,7 @@ Compare ARIMA forecasts with actual Bitcoin prices from July 2020 to Nov 2020.
 ```{r forecast visualisation}
 # Visualize the forecast with ggplot
 fcast_tbl %>%
-    ggplot(aes(x = index, y = price, color = key)) +
+    ggplot(aes(x = index, y = open, color = key)) +
     # 95% CI
     geom_ribbon(aes(ymin = lo.95, ymax = hi.95), 
                 fill = "#D5DBFF", color = NA, size = 0) +
@@ -214,11 +215,11 @@ fcast_tbl %>%
     geom_line() +
     # geom_point() +
     # Actuals
-    geom_line(aes(x = date, y = price), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
+    geom_line(aes(x = date, y = open), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
     # geom_point(aes(x = date, y = price), color = palette_light()[[1]], data = bitcoin_price_test_tbl) +
     # Aesthetics
-    labs(title = "Bitcoin Prices Forecast", x = "", y = "Closing Price",
-         subtitle = "ARIMA(1,1,1) without Drift") +
+    labs(title = "Bitcoin Prices Forecast", x = "", y = "Opening Price",
+         subtitle = "ARIMA(3,1,1)") +
     scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
     scale_y_continuous(labels = scales::dollar_format()) +
     scale_color_tq() +
@@ -231,7 +232,7 @@ Calculate errors for forecast Bitcoin prices.
 ```{r forecast error metrics}
 # Investigate test error 
 error_tbl <- left_join(bitcoin_price_test_tbl, fcast_tbl, by = c("date" = "index")) %>%
-    rename(actual = price.x, pred = price.y) %>%
+    rename(actual = open.x, pred = open.y) %>%
     select(date, actual, pred) %>%
     mutate(
         error     = actual - pred,
@@ -266,7 +267,7 @@ library(lubridate)
 # Model 1: auto_arima
 model_fit_arima_no_boost <- arima_reg() %>%
     set_engine(engine = "auto_arima") %>%
-    fit(price ~ date, data = bitcoin_price_train_tbl)
+    fit(open ~ date, data = bitcoin_price_train_tbl)
 
 # Model 2: arima with XGBoost
 model_fit_arima_boosted <- arima_boost(
@@ -274,18 +275,18 @@ model_fit_arima_boosted <- arima_boost(
     learn_rate = 0.015
 ) %>%
     set_engine(engine = "auto_arima_xgboost") %>%
-    fit(price ~ date + as.numeric(date) + factor(day(date), ordered = F),
+    fit(open ~ date + as.numeric(date) + factor(day(date), ordered = F),
         data =  bitcoin_price_train_tbl)
 
 # Model 3: error-trend-season (ets)
 model_fit_ets <- exp_smoothing() %>%
     set_engine(engine = "ets") %>%
-    fit(price ~ date, data = bitcoin_price_train_tbl)
+    fit(open ~ date, data = bitcoin_price_train_tbl)
 
 # Model 4: prophet
 model_fit_prophet <- prophet_reg() %>%
     set_engine(engine = "prophet") %>%
-    fit(price ~ date, data = bitcoin_price_train_tbl)
+    fit(open ~ date, data = bitcoin_price_train_tbl)
 
 # Model 5: prophet with XGBoost
 model_fit_prophet_boosted <- prophet_boost(
@@ -299,7 +300,7 @@ model_fit_prophet_boosted <- prophet_boost(
         learn_rate         = 0.15
     ) %>% 
     set_engine("prophet_xgboost") %>%
-    fit(price ~ date, data = bitcoin_price_train_tbl)
+    fit(open ~ date, data = bitcoin_price_train_tbl)
 
 # Add fitted models to a Modeltime Table
 models_tbl <- modeltime_table(
@@ -353,7 +354,7 @@ prophet_forecasts <-
                             bitcoin_price_test_tbl)
     ) %>% filter(.model_id == 4) %>%
     select(.index, .value) %>%
-    rename(date = .index, price = .value)
+    rename(date = .index, open = .value)
 
 # Append the last row of train data to prospect forecasts
 prophet_forecasts <-
@@ -363,7 +364,7 @@ prophet_forecasts <-
 # New column that contains 1 if Bitcoin prices increase, 0 otherwise
 prophet_forecasts_sign <-
     prophet_forecasts %>%
-    mutate(pred_signal = ifelse(lead(prophet_forecasts$price, 2) > lead(prophet_forecasts$price), 
+    mutate(pred_signal = ifelse(lead(prophet_forecasts$open, 2) > lead(prophet_forecasts$open), 
                                        1, 0)
     ) %>%
     filter(date >= "2020-07-01")
@@ -375,7 +376,7 @@ prophet_forecasts_sign
 
 Export the prophet prediction signals to be compared with the predictions of other models.
 
-```{r export}
+```{r export, eval = FALSE}
 # Export date and prophet forecast signals
 prophet_forecasts_sign %>%
   select(date, pred_signal) %>%
@@ -385,171 +386,7 @@ prophet_forecasts_sign %>%
 ```
 
 
-# 5. Time Series Using Log Returns
-
-One problem we might encounter when performing time series analysis using price data is that price data are not stationary. A stationary time series dataset in which data points are independent and identically distributed (IID) is an important assumption for time series models. 
-
-Thus, we explore whether converting the Bitcoin closing price data to a stationary time series will allow us to derive more accurate predictions using our various time series models.
-
-## 5.1 Compute Daily Log Returns
-
-One way to obtain convert the Bitcoin daily closing price data into a stationary time series is to calculate the daily log returns. 
-
-```{r compute log returns}
-# Training data
-bitcoin_log_train_tbl <-
-  bitcoin_price_train_tbl %>%
-  tq_mutate(select = price, 
-            mutate_fun = periodReturn,
-            period = 'daily', 
-            type = 'log',
-            col_rename = 'log_return') %>%
-  select(-price)
-
-# Test data
-bitcoin_log_test_tbl <-
-  bitcoin_price_test_tbl %>%
-  tq_mutate(select = price, 
-            mutate_fun = periodReturn,
-            period = 'daily', 
-            type = 'log',
-            col_rename = 'log_return') %>%
-  select(-price)
-```
-
-## 5.2 Visualisation of Log Returns
-
-By plotting the daily log returns of Bitcoin closing prices, we observe the characteristics of a stationary time series.
-
-```{r visualise log returns}
-# Visualise log returns
-bitcoin_log_train_tbl %>%
-    ggplot(aes(date, log_return)) +
-    geom_line(col = palette_light()[6]) +
-    theme_tq() +
-    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
-    labs(title = "Log Return of Bitcoin Prices: Jan 2018 through Jun 2020")
-```
-
-The stationarity can be verified using a KPSS test, which has a null hypothesis of trend stationarity. A p-value above
-
-```{r kpss test}
-# Convert train data for log returns to numeric vector
-bitcoin_log_vector <- unlist(bitcoin_log_train_tbl[,2], use.names = FALSE)
-
-# Perform KPSS test
-tseries::kpss.test(bitcoin_log_vector)
-```
-
-## 5.3 Train Time Series Models on Log Returns
-
-We use the same set of 5 time series models as the one above, this time training them on the Bitcoin daily log returns instead of daily prices. This is followed by a visualisation of the predictions.
-
-```{r log return model training}
-# Model 1: auto_arima
-log_model_fit_arima_no_boost <- arima_reg() %>%
-    set_engine(engine = "auto_arima") %>%
-    fit(log_return ~ date, data = bitcoin_log_train_tbl)
-
-# Model 2: arima with XGBoost
-log_model_fit_arima_boosted <- arima_boost(
-    min_n = 2,
-    learn_rate = 0.015
-) %>%
-    set_engine(engine = "auto_arima_xgboost") %>%
-    fit(log_return ~ date + as.numeric(date) + factor(day(date), ordered = F),
-        data =  bitcoin_log_train_tbl)
-
-# Model 3: error-trend-season (ets)
-log_model_fit_ets <- exp_smoothing() %>%
-    set_engine(engine = "ets") %>%
-    fit(log_return ~ date, data = bitcoin_log_train_tbl)
-
-# Model 4: prophet
-log_model_fit_prophet <- prophet_reg() %>%
-    set_engine(engine = "prophet") %>%
-    fit(log_return ~ date, data = bitcoin_log_train_tbl)
-
-# Model 5: prophet with XGBoost
-log_model_fit_prophet_boosted <- prophet_boost(
-        seasonality_daily  = FALSE, 
-        seasonality_weekly = FALSE, 
-        seasonality_yearly = FALSE,
-        changepoint_range  = 0.90,
-        trees              = 300,
-        mtry               = 0.50,
-        min_n              = 30,
-        learn_rate         = 0.15
-    ) %>% 
-    set_engine("prophet_xgboost") %>%
-    fit(log_return ~ date, data = bitcoin_log_train_tbl)
-
-# Add fitted models to a Modeltime Table
-log_models_tbl <- modeltime_table(
-    log_model_fit_arima_no_boost,
-    log_model_fit_arima_boosted,
-    log_model_fit_ets,
-    log_model_fit_prophet,
-    log_model_fit_prophet_boosted
-)
-
-# Calibrate the model to test data
-log_calibration_tbl <- log_models_tbl %>%
-    modeltime_calibrate(new_data = bitcoin_log_test_tbl)
-
-# Visualise forecasted values for all models
-log_calibration_tbl %>%
-    modeltime_forecast(
-        new_data    = bitcoin_log_test_tbl,
-        actual_data = rbind(bitcoin_log_train_tbl,
-                            bitcoin_log_test_tbl)
-    ) %>%
-    plot_modeltime_forecast(
-      .legend_max_width = 25, # For mobile screens
-      .interactive      = TRUE
-    )
-```
-
-## 5.4 Compare Accuracy of Log Models
-
-Once again, the regular `prophet` model looks the most interesting as we observe some movements the predicted log returns. We construct a table with a set of common accuracy scores to check if it is indeed the most accurate model.
-
-```{r log models accuracy}
-log_calibration_tbl %>%
-    modeltime_accuracy() %>%
-    table_modeltime_accuracy(
-        .interactive = TRUE
-    )
-```
-
-## 5.5 Generate Prediction Signals for Best Model
-
-The regular `prophet` model for the log returns does seem to be one of the more suitable models. We move on to generate the prediction signals for this model, where 1 represents a positive log return and 0 otherwise.
-
-```{r log prediction signals}
-# Keep prophet forecasts
-log_prophet_forecasts <-
-    log_calibration_tbl %>%
-    modeltime_forecast(
-        new_data    = bitcoin_log_test_tbl,
-        actual_data = rbind(bitcoin_log_train_tbl,
-                            bitcoin_log_test_tbl)
-    ) %>% filter(.model_id == 4) %>%
-    select(.index, .value) %>%
-    rename(date = .index, log_returns = .value)
-
-# New column that contains 1 if Bitcoin prices increase, 0 otherwise
-log_prophet_forecasts_sign <-
-    log_prophet_forecasts %>%
-    mutate(log_pred_signal = ifelse(lead(log_prophet_forecasts$log_returns) > 
-                                      log_prophet_forecasts$log_returns,
-                                    1, 0)
-    )
-
-log_prophet_forecasts_sign
-```
-
-# 6. Trading Strategy
+# 5. Trading Strategy
 
 We simulate the execution of a trading strategy where we buy Bitcoin on the days the `prophet` model predicts a day-on-day increase in Bitcoin prices and sell otherwise.
 
@@ -561,29 +398,27 @@ bitcoin_price_test_returns <-
 
 # Compute future return and future return sign for test data
 bitcoin_price_test_returns <-
-  bitcoin_price_test_returns %>%
-  tq_mutate(select = price,
-          mutate_fun = periodReturn,
-          period = 'daily',
-          type = 'arithmetic',
-          col_rename = 'future_return') %>%
-  mutate(future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>%
-  mutate_at(c("future_return", "future_return_sign"), lead) %>%
+  bitcoin_price_test_returns %>% tq_mutate(select = open,
+            mutate_fun = periodReturn,
+            period = 'daily',
+            type = 'arithmetic',
+            col_rename = 'future_return') %>%
+  mutate(future_return = lead(future_return, n=2, default = 0),
+         future_return_sign = as.factor(ifelse(future_return > 0, 1, 0))) %>%
   filter(date >= "2020-07-01")
 
 # Merge test data and prophet prediction signal
 test_and_prophet <- 
   bitcoin_price_test_returns %>%
   bind_cols(select(prophet_forecasts_sign, "pred_signal")) %>%
-  bind_cols(select(log_prophet_forecasts_sign, "log_pred_signal")) %>%
-  mutate(trading_cost = abs(pred_signal - lag(pred_signal, n = 1, default = 0)) * 0.003,
-         return_buyhold = cumprod(1 + future_return),
-         return_prophet_price = cumprod(1 + future_return * pred_signal - trading_cost),
-         return_prophet_log = cumprod(1 + future_return * log_pred_signal - trading_cost))
+  mutate(return_buyhold = cumprod(1 + future_return),
+         return_prophet = cumprod(1 + lead(future_return) * pred_signal)) %>%
+  filter(date < "2020-11-29") # remove NAs
+
 
 # Visualisation of prophet strategy vs buy-and-hold strategy
 test_and_prophet %>% 
-  select(date, return_buyhold, return_prophet_price, return_prophet_log) %>% 
+  select(date, return_buyhold, return_prophet) %>% 
   gather(key = "strategy", value = "returns", -date) %>% 
   ggplot(aes(x=date, y = returns)) +
     geom_line(aes(color = strategy)) +
