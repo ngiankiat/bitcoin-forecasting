@@ -195,9 +195,9 @@ We chose a XGBoost model because of it reduces variance and bias. Each model is 
 ```{r}
 rf_model <- boost_tree(learn_rate = 0.01,
                         tree_depth = tune(),
-                        min_n = 1,
+                        min_n = tune(),
                         mtry = 500,
-                        trees = tune(),
+                        trees = 100,
                         stop_iter = 50) %>%
   set_engine('xgboost') %>%
   set_mode('classification')
@@ -225,7 +225,7 @@ We perform hyperparamter tuning for the "tree_depth" and "min_n" parameters to e
 ```{r}
 # Create grid. Create 5^2 = 25 models.
 rf_grid <- grid_regular(tree_depth(),
-                         trees(),
+                         min_n(),
                          levels = 5)
 rf_grid
 ```
